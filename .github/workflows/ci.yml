@@ -51,6 +51,47 @@ jobs:
       - name: Test
         run: npm test
 
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install -e "bindings/python[dev]"
+
+      - run: pytest bindings/python/tests -v
+
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - run: cd bindings/go && go test ./... -v
+
+      - run: cd bindings/go && go vet ./...
+
+  conformance:
+    name: Conformance
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo run -p hushspec-testkit -- --fixtures fixtures
+
   docs:
     name: Docs
     runs-on: ubuntu-latest

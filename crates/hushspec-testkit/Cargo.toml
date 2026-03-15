@@ -3,7 +3,16 @@ name = "hushspec-testkit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Test utilities for hushspec"
+description = "Conformance test runner for HushSpec implementations"
+
+[[bin]]
+name = "hushspec-testkit"
+path = "src/main.rs"
 
 [dependencies]
 hushspec = { path = "../hushspec" }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+colored = "2"
