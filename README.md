@@ -7,6 +7,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/backbay-labs/hush/actions"><img src="https://github.com/backbay-labs/hush/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/backbay-labs/hush/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
+  <img src="https://img.shields.io/badge/spec-v0.1.0-orange.svg" alt="Spec Version">
+</p>
+
+<p align="center">
   <a href="./spec/hushspec-core.md">Spec</a> &middot;
   <a href="./docs/src/introduction.md">Docs</a> &middot;
   <a href="./rulesets/">Rulesets</a> &middot;
@@ -136,6 +142,30 @@ const result = validate(spec);
 console.log(result.valid); // true
 ```
 
+### Python
+
+```bash
+pip install hushspec  # or from source: pip install ./bindings/python
+```
+
+```python
+from hushspec import parse_or_raise, validate
+
+spec = parse_or_raise(yaml_string)
+result = validate(spec)
+assert result.is_valid()
+```
+
+### Go
+
+```go
+import "github.com/backbay-labs/hush/bindings/go/hushspec"
+
+spec, err := hushspec.Parse(yamlString)
+result := hushspec.Validate(spec)
+fmt.Println(result.IsValid())
+```
+
 ### Using with Clawdstrike
 
 HushSpec documents load natively in [Clawdstrike](https://github.com/backbay-labs/clawdstrike):
@@ -155,8 +185,9 @@ hush policy migrate policy.yaml --to hushspec
 ```
 spec/           Normative specification (core + 3 extensions)
 schemas/        JSON Schema definitions (draft 2020-12)
-crates/         Rust reference crate (hushspec)
+crates/         Rust reference crate (hushspec) + testkit CLI
 packages/       TypeScript reference package (@hushspec/core)
+bindings/       Python and Go SDKs
 rulesets/       6 built-in security rulesets
 fixtures/       31 conformance test fixtures
 docs/           mdBook documentation site

@@ -19,6 +19,9 @@ hush/
 │   └── hushspec-testkit/  # Test utilities and fixture runners
 ├── packages/          # TypeScript/JS packages
 │   └── core/          # @hushspec/core - TS reference implementation
+├── bindings/          # Language bindings
+│   ├── python/        # Python SDK (hushspec)
+│   └── go/            # Go SDK (hushspec)
 ├── rulesets/          # Example and built-in ruleset YAML files
 ├── fixtures/          # Test fixtures (valid/invalid documents, edge cases)
 └── docs/              # Documentation source (mdBook)
@@ -60,6 +63,33 @@ npm test
 
 # Lint
 npm run lint
+```
+
+### Python
+
+```bash
+# Install with dev dependencies
+pip install -e "bindings/python[dev]"
+
+# Run tests
+pytest bindings/python/tests
+```
+
+### Go
+
+```bash
+# Run tests
+cd bindings/go && go test ./...
+
+# Vet
+cd bindings/go && go vet ./...
+```
+
+### Conformance Testkit
+
+```bash
+# Run conformance tests against fixtures
+cargo run -p hushspec-testkit -- --fixtures fixtures
 ```
 
 ## Conventions
