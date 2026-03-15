@@ -43,6 +43,17 @@ lcov.info
 .env.local
 .env.*.local
 
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.pytest_cache/
+.venv/
+venv/
+
 # Package manager
 .npm/
 .yarn/
