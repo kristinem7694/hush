@@ -1,0 +1,9 @@
+[book]
+title = "HushSpec"
+description = "Portable specification for AI agent security rules"
+authors = ["Backbay Industries"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"

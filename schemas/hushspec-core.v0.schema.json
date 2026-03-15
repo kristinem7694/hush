@@ -1,0 +1,442 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hushspec.dev/schemas/hushspec-core.v0.schema.json",
+  "title": "HushSpec Core v0",
+  "description": "Schema for HushSpec Core v0.x documents. Validates portable, engine-neutral AI agent security rules.",
+  "type": "object",
+  "required": ["hushspec"],
+  "additionalProperties": false,
+  "properties": {
+    "hushspec": {
+      "type": "string",
+      "pattern": "^0\\.\\d+\\.\\d+$",
+      "description": "HushSpec version. Must match ^0\\. for v0.x documents."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable policy name."
+    },
+    "description": {
+      "type": "string",
+      "description": "Policy description."
+    },
+    "extends": {
+      "type": "string",
+      "description": "Reference to a base policy. Resolution is engine-specific."
+    },
+    "merge_strategy": {
+      "type": "string",
+      "enum": ["replace", "merge", "deep_merge"],
+      "default": "deep_merge",
+      "description": "Strategy for merging with the base policy."
+    },
+    "rules": {
+      "$ref": "#/$defs/Rules"
+    },
+    "extensions": {
+      "$ref": "#/$defs/Extensions"
+    }
+  },
+  "$defs": {
+    "Rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Security rule declarations.",
+      "properties": {
+        "forbidden_paths": {
+          "$ref": "#/$defs/ForbiddenPaths"
+        },
+        "path_allowlist": {
+          "$ref": "#/$defs/PathAllowlist"
+        },
+        "egress": {
+          "$ref": "#/$defs/Egress"
+        },
+        "secret_patterns": {
+          "$ref": "#/$defs/SecretPatterns"
+        },
+        "patch_integrity": {
+          "$ref": "#/$defs/PatchIntegrity"
+        },
+        "shell_commands": {
+          "$ref": "#/$defs/ShellCommands"
+        },
+        "tool_access": {
+          "$ref": "#/$defs/ToolAccess"
+        },
+        "computer_use": {
+          "$ref": "#/$defs/ComputerUse"
+        },
+        "remote_desktop_channels": {
+          "$ref": "#/$defs/RemoteDesktopChannels"
+        },
+        "input_injection": {
+          "$ref": "#/$defs/InputInjection"
+        }
+      }
+    },
+    "ForbiddenPaths": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Block access to sensitive filesystem paths.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this rule is active."
+        },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Glob patterns matching forbidden paths."
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Glob patterns that override pattern matches."
+        }
+      }
+    },
+    "PathAllowlist": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Allowlist-based path access control.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this rule is active."
+        },
+        "read": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Glob patterns allowed for read access."
+        },
+        "write": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Glob patterns allowed for write access."
+        },
+        "patch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Glob patterns allowed for patch operations. If empty, falls back to write."
+        }
+      }
+    },
+    "Egress": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Network egress control by domain.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this rule is active."
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Domain glob patterns to allow."
+        },
+        "block": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Domain glob patterns to block. Block takes precedence over allow."
+        },
+        "default": {
+          "type": "string",
+          "enum": ["allow", "block"],
+          "default": "block",
+          "description": "Default decision when no pattern matches."
+        }
+      }
+    },
+    "SecretPattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A named regex pattern for secret detection.",
+      "required": ["name", "pattern", "severity"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique identifier for this pattern."
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Regular expression to match against content."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "error", "warn"],
+          "description": "Severity level of a match."
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of what this detects."
+        }
+      }
+    },
+    "SecretPatterns": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Detect secrets in content.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this rule is active."
+        },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SecretPattern"
+          },
+          "default": [],
+          "description": "Named regex patterns for secret detection. Names must be unique."
+        },
+        "skip_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Glob patterns of paths to skip scanning."
+        }
+      }
+    },
+    "PatchIntegrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Validate patch/diff safety.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this rule is active."
+        },
+        "max_additions": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1000,
+          "description": "Maximum number of added lines permitted."
+        },
+        "max_deletions": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 500,
+          "description": "Maximum number of deleted lines permitted."
+        },
+        "forbidden_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Regex patterns forbidden in patch content."
+        },
+        "require_balance": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether additions/deletions must be balanced."
+        },
+        "max_imbalance_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 10.0,
+          "description": "Maximum ratio of additions to deletions (or vice versa)."
+        }
+      }
+    },
+    "ShellCommands": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Block dangerous shell commands.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this rule is active."
+        },
+        "forbidden_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Regex patterns forbidden in shell commands."
+        }
+      }
+    },
+    "ToolAccess": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Control tool/MCP invocations.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether this rule is active."
+        },
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Tool name allowlist."
+        },
+        "block": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Tool name blocklist. Block takes precedence."
+        },
+        "require_confirmation": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Tools requiring user/operator approval."
+        },
+        "default": {
+          "type": "string",
+          "enum": ["allow", "block"],
+          "default": "allow",
+          "description": "Default decision when no list matches."
+        },
+        "max_args_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum argument payload size in bytes."
+        }
+      }
+    },
+    "ComputerUse": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Control computer use agent actions.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this rule is active."
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["observe", "guardrail", "fail_closed"],
+          "default": "guardrail",
+          "description": "Enforcement mode."
+        },
+        "allowed_actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Action identifiers permitted (e.g., 'remote.session.connect', 'input.inject')."
+        }
+      }
+    },
+    "RemoteDesktopChannels": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Control remote desktop side channels.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this rule is active."
+        },
+        "clipboard": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow clipboard sharing."
+        },
+        "file_transfer": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow file transfer."
+        },
+        "audio": {
+          "type": "boolean",
+          "default": true,
+          "description": "Allow audio redirection."
+        },
+        "drive_mapping": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow drive/filesystem mapping."
+        }
+      }
+    },
+    "InputInjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Control input injection capabilities.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this rule is active."
+        },
+        "allowed_types": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Input type identifiers permitted (e.g., 'keyboard', 'mouse', 'touch')."
+        },
+        "require_postcondition_probe": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether postcondition verification is required after input injection."
+        }
+      }
+    },
+    "Extensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Extension modules for optional capabilities beyond core rules.",
+      "properties": {
+        "posture": {
+          "type": "object",
+          "description": "Stateful capability and budget management. Schema defined in companion specification."
+        },
+        "origins": {
+          "type": "object",
+          "description": "Origin-aware policy profiles. Schema defined in companion specification."
+        },
+        "detection": {
+          "type": "object",
+          "description": "Detection engine thresholds and configuration. Schema defined in companion specification."
+        }
+      }
+    }
+  }
+}

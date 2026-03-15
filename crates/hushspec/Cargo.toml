@@ -1,0 +1,20 @@
+[package]
+name = "hushspec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Portable specification types for AI agent security rules"
+repository = "https://github.com/backbay-labs/hush"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+pretty_assertions = "1"
+
+[features]
+default = ["std"]
+std = []
