@@ -4,11 +4,23 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hushspec"
-version = "0.1.0"
+version = "0.1.1"
 description = "Portable specification for AI agent security rules"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
+readme = "README.md"
+keywords = ["ai", "security", "policy", "agent", "hushspec", "guardrails"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries",
+]
 dependencies = ["pyyaml>=6.0"]
+
+[project.urls]
+Homepage = "https://github.com/backbay-labs/hush"
+Repository = "https://github.com/backbay-labs/hush"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov"]

@@ -10,7 +10,7 @@ name = "hushspec-testkit"
 path = "src/main.rs"
 
 [dependencies]
-hushspec = { version = "0.1.0", path = "../hushspec" }
+hushspec = { version = "0.1", path = "../hushspec" }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1"

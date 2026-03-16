@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 description = "Portable specification types for AI agent security rules"
 repository = "https://github.com/backbay-labs/hush"
+readme = "README.md"
+keywords = ["ai", "security", "policy", "agent", "hushspec"]
+categories = ["config", "parser-implementations"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

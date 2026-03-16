@@ -4,13 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "CLI tool for validating, testing, and scaffolding HushSpec policies"
+repository = "https://github.com/backbay-labs/hush"
+readme = "README.md"
+keywords = ["ai", "security", "policy", "cli", "hushspec"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "h2h"
 path = "src/main.rs"
 
 [dependencies]
-hushspec = { version = "0.1.0", path = "../hushspec", features = ["signing"] }
+hushspec = { version = "0.1", path = "../hushspec", features = ["signing"] }
 clap = { version = "4", features = ["derive"] }
 colored = "2"
 serde = { version = "1", features = ["derive"] }

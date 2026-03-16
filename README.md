@@ -10,6 +10,9 @@
   <a href="https://github.com/backbay-labs/hush/actions"><img src="https://github.com/backbay-labs/hush/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/backbay-labs/hush/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/spec-v0.1.0-orange.svg" alt="Spec Version">
+  <a href="https://crates.io/crates/hushspec"><img src="https://img.shields.io/crates/v/hushspec.svg" alt="crates.io"></a>
+  <a href="https://www.npmjs.com/package/@hushspec/core"><img src="https://img.shields.io/npm/v/@hushspec/core.svg" alt="npm"></a>
+  <a href="https://pypi.org/project/hushspec/"><img src="https://img.shields.io/pypi/v/hushspec.svg" alt="PyPI"></a>
 </p>
 
 <p align="center">
@@ -24,8 +27,6 @@
 HushSpec is an open policy format for AI agent security rules. It defines **what** an agent may do at runtime, including filesystem access, network egress, tool usage, secret detection, and more, without prescribing **how** those controls must be enforced. That separation makes policies portable across runtimes, frameworks, and languages.
 
 **Status:** v0.1.0 (draft). The spec is still evolving, and breaking changes may occur before v1.0.
-
-The Rust crate, TypeScript package, Python package, and Go module are not published to package registries yet. Use them from this repository for now.
 
 ## Quick Example
 
@@ -80,16 +81,44 @@ All four SDKs implement the full HushSpec pipeline, from parse and validate thro
 | Observability | Yes | Yes | Yes | Yes |
 | Receipt Sinks | Yes | Yes | Yes | Yes |
 
-## Getting Started
+## Installation
 
-The examples below use the current repo-local install path for each SDK.
+### CLI
+
+```bash
+cargo install hushspec-cli
+```
+
+This installs the `h2h` command. See [CLI Tool](#cli-tool) below.
 
 ### Rust
 
 ```toml
 [dependencies]
-hushspec = { git = "https://github.com/backbay-labs/hush" }
+hushspec = "0.1"
 ```
+
+### TypeScript
+
+```bash
+npm install @hushspec/core
+```
+
+### Python
+
+```bash
+pip install hushspec
+```
+
+### Go
+
+```bash
+go get github.com/backbay-labs/hush/packages/go@main
+```
+
+## Getting Started
+
+### Rust
 
 <!-- smoke: readme-rust -->
 ```rust
@@ -103,10 +132,6 @@ assert!(result.is_valid());
 
 ### TypeScript
 
-```bash
-npm install ../hush/packages/hushspec
-```
-
 <!-- smoke: readme-typescript -->
 ```typescript
 import { parseOrThrow, validate } from '@hushspec/core';
@@ -119,10 +144,6 @@ console.log(result.valid); // true
 
 ### Python
 
-```bash
-pip install ./packages/python
-```
-
 <!-- smoke: readme-python -->
 ```python
 from hushspec import parse_or_raise, validate
@@ -134,10 +155,6 @@ assert result.is_valid
 ```
 
 ### Go
-
-```bash
-go get github.com/backbay-labs/hush/packages/go@main
-```
 
 <!-- smoke: readme-go -->
 ```go
@@ -232,10 +249,10 @@ h2h panic activate --sentinel /tmp/hushspec.panic
 h2h panic deactivate --sentinel /tmp/hushspec.panic
 ```
 
-Build from source:
+Install from crates.io:
 
 ```bash
-cargo install --path crates/hushspec-cli
+cargo install hushspec-cli
 ```
 
 <details>

@@ -1,0 +1,132 @@
+# hushspec
+
+Portable specification types for AI agent security rules.
+
+`hushspec` is the Python SDK for the [HushSpec](https://github.com/backbay-labs/hush) open policy format. Parse, validate, evaluate, and enforce security rules for AI agent runtimes.
+
+## Installation
+
+```bash
+pip install hushspec
+```
+
+Requires Python 3.10+.
+
+## Quick Start
+
+```python
+from hushspec import parse_or_raise, validate, evaluate
+
+policy = parse_or_raise("""
+hushspec: "0.1.0"
+name: my-policy
+rules:
+  egress:
+    allow: ["api.github.com"]
+    block: []
+    default: block
+""")
+
+# Validate
+result = validate(policy)
+assert result.is_valid
+
+# Evaluate an action
+decision = evaluate(policy, {"type": "egress", "target": "api.github.com"})
+assert decision.decision == "allow"
+```
+
+## HushGuard Middleware
+
+`HushGuard` wraps policy loading and evaluation behind a simple interface.
+
+```python
+from hushspec import HushGuard
+
+guard = HushGuard.from_file("./policy.yaml")
+
+# Check without raising
+result = guard.check({"type": "tool_call", "target": "bash"})
+if result.decision == "deny":
+    print(f"Blocked: {result.reason}")
+
+# Or enforce (raises HushSpecDenied on deny)
+guard.enforce({"type": "egress", "target": "api.openai.com"})
+```
+
+## Features
+
+### Evaluation
+
+```python
+from hushspec import parse_or_raise, evaluate
+
+spec = parse_or_raise(policy_yaml)
+result = evaluate(spec, {"type": "egress", "target": "evil.example.com"})
+# result.decision: "allow" | "warn" | "deny"
+# result.matched_rule: "rules.egress.default"
+```
+
+### Audit Trail
+
+```python
+from hushspec import parse_or_raise, evaluate_audited
+
+receipt = evaluate_audited(spec, action, {
+    "enabled": True,
+    "include_rule_trace": True,
+    "redact_content": False,
+})
+# receipt.decision, receipt.rule_evaluations, receipt.policy_summary
+```
+
+### Detection Pipeline
+
+Plug prompt injection, jailbreak, and exfiltration checks into the evaluation flow.
+
+```python
+from hushspec import evaluate_with_detection, DetectorRegistry
+
+registry = DetectorRegistry.with_defaults()
+result = evaluate_with_detection(spec, action, registry, {
+    "enabled": True,
+    "prompt_injection_threshold": 0.5,
+})
+```
+
+### Receipt Sinks
+
+Route decision receipts to files, stderr, or custom callbacks.
+
+```python
+from hushspec import FileReceiptSink, FilteredSink, MultiSink
+
+sink = MultiSink([
+    FileReceiptSink("/var/log/hushspec-receipts.jsonl"),
+    FilteredSink(stderr_sink, lambda r: r.decision == "deny"),
+])
+```
+
+### Panic Mode
+
+```python
+from hushspec import activate_panic, deactivate_panic, is_panic_active
+
+activate_panic()
+# All evaluate() calls now return deny
+deactivate_panic()
+```
+
+## CLI
+
+The `h2h` CLI tool provides validate, lint, test, diff, format, sign, and more:
+
+```bash
+cargo install hushspec-cli
+h2h validate policy.yaml
+h2h lint policy.yaml
+```
+
+## License
+
+Apache-2.0
