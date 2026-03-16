@@ -112,6 +112,30 @@ rules:
     expect(result.ok).toBe(true);
   });
 
+  it('accepts RE2 inline case-insensitive modifiers during parse', () => {
+    const result = parse(`
+hushspec: "0.1.0"
+rules:
+  shell_commands:
+    forbidden_patterns:
+      - "(?i)rm\\\\s+-rf\\\\s+/"
+`);
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts Python-style named groups during parse', () => {
+    const result = parse(`
+hushspec: "0.1.0"
+rules:
+  secret_patterns:
+    patterns:
+      - name: named_group
+        pattern: "(?P<token>sk-[A-Za-z0-9]{48})"
+        severity: critical
+`);
+    expect(result.ok).toBe(true);
+  });
+
   it('rejects syntactically invalid regex', () => {
     const result = parse(`
 hushspec: "0.1.0"

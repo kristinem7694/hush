@@ -215,7 +215,10 @@ fn format_spec(spec: &HushSpec) -> String {
     let mut out = String::new();
 
     // hushspec (always first, always quoted)
-    out.push_str(&format!("hushspec: \"{}\"\n", spec.hushspec));
+    out.push_str(&format!(
+        "hushspec: {}\n",
+        yaml_double_quoted_scalar(&spec.hushspec)
+    ));
 
     // name
     if let Some(name) = &spec.name {
@@ -520,17 +523,20 @@ fn yaml_scalar(s: &str) -> String {
         || looks_like_special_yaml(s);
 
     if needs_quoting {
-        // Use double quotes, escaping internal double quotes and backslashes
-        let escaped = s
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t");
-        format!("\"{escaped}\"")
+        yaml_double_quoted_scalar(s)
     } else {
         s.to_string()
     }
+}
+
+fn yaml_double_quoted_scalar(s: &str) -> String {
+    let escaped = s
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("\"{escaped}\"")
 }
 
 fn looks_like_special_yaml(s: &str) -> bool {
@@ -687,6 +693,30 @@ mod tests {
                 .and_then(|rules| rules.computer_use.as_ref())
                 .map(|rule| rule.mode),
             Some(hushspec::ComputerUseMode::Guardrail)
+        );
+    }
+
+    #[test]
+    fn format_spec_escapes_hushspec_version_scalar() {
+        let spec = HushSpec {
+            hushspec: "0.1.0\"\nnext".to_string(),
+            name: None,
+            description: None,
+            extends: None,
+            merge_strategy: None,
+            rules: None,
+            extensions: None,
+            metadata: None,
+        };
+
+        let formatted = format_spec(&spec);
+        assert!(formatted.starts_with("hushspec: \"0.1.0\\\"\\nnext\"\n"));
+
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(&formatted).expect("formatted YAML should stay parseable");
+        assert_eq!(
+            parsed.get("hushspec").and_then(|value| value.as_str()),
+            Some("0.1.0\"\nnext")
         );
     }
 }

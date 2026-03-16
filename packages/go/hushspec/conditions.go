@@ -9,10 +9,10 @@ import (
 const MaxNestingDepth = 8
 
 type TimeWindowCondition struct {
-	Start    string   `yaml:"start" json:"start"`       // HH:MM (24-hour)
-	End      string   `yaml:"end" json:"end"`           // HH:MM (24-hour)
+	Start    string   `yaml:"start" json:"start"`                           // HH:MM (24-hour)
+	End      string   `yaml:"end" json:"end"`                               // HH:MM (24-hour)
 	Timezone string   `yaml:"timezone,omitempty" json:"timezone,omitempty"` // IANA tz, defaults to UTC
-	Days     []string `yaml:"days,omitempty" json:"days,omitempty"`        // mon..sun
+	Days     []string `yaml:"days,omitempty" json:"days,omitempty"`         // mon..sun
 }
 
 // Condition gates whether a rule block is active. All present fields are
@@ -96,20 +96,6 @@ func checkTimeWindow(tw *TimeWindowCondition, context *RuntimeContext) bool {
 
 	hour, minute, dayOfWeek := now[0], now[1], now[2]
 
-	if len(tw.Days) > 0 {
-		dayAbbrev := dayAbbreviationCond(dayOfWeek)
-		found := false
-		for _, d := range tw.Days {
-			if strings.EqualFold(d, dayAbbrev) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
 	startH, startM, ok := parseHHMM(tw.Start)
 	if !ok {
 		return false
@@ -122,6 +108,25 @@ func checkTimeWindow(tw *TimeWindowCondition, context *RuntimeContext) bool {
 	currentMinutes := hour*60 + minute
 	startMinutes := startH*60 + startM
 	endMinutes := endH*60 + endM
+	wrapsMidnight := startMinutes > endMinutes
+
+	if len(tw.Days) > 0 {
+		effectiveDay := dayOfWeek
+		if wrapsMidnight && currentMinutes < endMinutes {
+			effectiveDay = (dayOfWeek + 6) % 7
+		}
+		dayAbbrev := dayAbbreviationCond(effectiveDay)
+		found := false
+		for _, d := range tw.Days {
+			if strings.EqualFold(d, dayAbbrev) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
 
 	if startMinutes == endMinutes {
 		return true
@@ -179,8 +184,11 @@ func resolveCurrentTimeForCondition(context *RuntimeContext, tz string) []int {
 	if tzName == "" {
 		tzName = "UTC"
 	}
-	offsetHours := parseTimezoneOffsetGo(tzName)
-	t = t.Add(time.Duration(offsetHours) * time.Hour)
+	location := resolveConditionLocation(tzName)
+	if location == nil {
+		return nil
+	}
+	t = t.In(location)
 
 	hour := t.Hour()
 	minute := t.Minute()
@@ -195,66 +203,69 @@ func resolveCurrentTimeForCondition(context *RuntimeContext, tz string) []int {
 	return []int{hour, minute, dayOfWeek}
 }
 
-var timezoneOffsets = map[string]int{
-	"UTC":                0,
-	"utc":                0,
-	"Etc/UTC":            0,
-	"Etc/GMT":            0,
-	"GMT":                0,
-	"America/New_York":   -5,
-	"US/Eastern":         -5,
-	"EST":                -5,
-	"America/Chicago":    -6,
-	"US/Central":         -6,
-	"CST":                -6,
-	"America/Denver":     -7,
-	"US/Mountain":        -7,
-	"MST":                -7,
-	"America/Los_Angeles": -8,
-	"US/Pacific":         -8,
-	"PST":                -8,
-	"Europe/London":      0,
-	"GB":                 0,
-	"Europe/Paris":       1,
-	"Europe/Berlin":      1,
-	"CET":                1,
-	"Europe/Helsinki":    2,
-	"EET":                2,
-	"Asia/Tokyo":         9,
-	"Japan":              9,
-	"JST":                9,
-	"Asia/Shanghai":      8,
-	"Asia/Hong_Kong":     8,
-	"PRC":                8,
-	"Asia/Kolkata":       5,
-	"Asia/Calcutta":      5,
-	"IST":                5,
+var fixedTimezoneOffsets = map[string]int{
+	"UTC":     0,
+	"utc":     0,
+	"Etc/UTC": 0,
+	"Etc/GMT": 0,
+	"GMT":     0,
+	"EST":     -5 * 60,
+	"CST":     -6 * 60,
+	"MST":     -7 * 60,
+	"PST":     -8 * 60,
+	"GB":      0,
+	"CET":     60,
+	"EET":     120,
+	"Japan":   9 * 60,
+	"JST":     9 * 60,
+	"PRC":     8 * 60,
+	"IST":     5*60 + 30,
 }
 
-func parseTimezoneOffsetGo(tz string) int {
-	if offset, ok := timezoneOffsets[tz]; ok {
-		return offset
+func resolveConditionLocation(tz string) *time.Location {
+	if location, err := time.LoadLocation(tz); err == nil {
+		return location
+	}
+
+	if offset, ok := fixedTimezoneOffsets[tz]; ok {
+		return time.FixedZone(tz, offset*60)
 	}
 
 	if strings.HasPrefix(tz, "+") {
-		return parseOffsetValueGo(tz[1:])
+		offset, ok := parseTimezoneOffsetGo(tz[1:])
+		if !ok {
+			return nil
+		}
+		return time.FixedZone(tz, offset*60)
 	}
 	if strings.HasPrefix(tz, "-") {
-		return -parseOffsetValueGo(tz[1:])
+		offset, ok := parseTimezoneOffsetGo(tz[1:])
+		if !ok {
+			return nil
+		}
+		return time.FixedZone(tz, -offset*60)
 	}
 
-	return 0
+	return nil
 }
 
-func parseOffsetValueGo(s string) int {
+func parseTimezoneOffsetGo(s string) (int, bool) {
 	if idx := strings.Index(s, ":"); idx >= 0 {
-		s = s[:idx]
+		hours, err := strconv.Atoi(s[:idx])
+		if err != nil {
+			return 0, false
+		}
+		minutes, err := strconv.Atoi(s[idx+1:])
+		if err != nil || hours < 0 || hours > 23 || minutes < 0 || minutes > 59 {
+			return 0, false
+		}
+		return hours*60 + minutes, true
 	}
-	v, err := strconv.Atoi(s)
-	if err != nil {
-		return 0
+	hours, err := strconv.Atoi(s)
+	if err != nil || hours < 0 || hours > 23 {
+		return 0, false
 	}
-	return v
+	return hours * 60, true
 }
 
 func checkContextMatch(expected map[string]interface{}, context *RuntimeContext) bool {
@@ -453,4 +464,3 @@ func applyConditions(
 
 	return &effective
 }
-

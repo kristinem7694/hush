@@ -101,17 +101,6 @@ function checkTimeWindow(
 
   const [hour, minute, dayOfWeek] = now;
 
-  if (tw.days != null && tw.days.length > 0) {
-    const dayAbbrev = dayAbbreviation(dayOfWeek);
-    if (
-      !tw.days.some(
-        (d) => d.toLowerCase() === dayAbbrev,
-      )
-    ) {
-      return false;
-    }
-  }
-
   const startParsed = parseHHMM(tw.start);
   const endParsed = parseHHMM(tw.end);
   if (startParsed == null || endParsed == null) {
@@ -124,6 +113,21 @@ function checkTimeWindow(
   const currentMinutes = hour * 60 + minute;
   const startMinutes = startH * 60 + startM;
   const endMinutes = endH * 60 + endM;
+  const wrapsMidnight = startMinutes > endMinutes;
+
+  if (tw.days != null && tw.days.length > 0) {
+    const effectiveDay = wrapsMidnight && currentMinutes < endMinutes
+      ? (dayOfWeek + 6) % 7
+      : dayOfWeek;
+    const dayAbbrev = dayAbbreviation(effectiveDay);
+    if (
+      !tw.days.some(
+        (d) => d.toLowerCase() === dayAbbrev,
+      )
+    ) {
+      return false;
+    }
+  }
 
   if (startMinutes === endMinutes) {
     return true;

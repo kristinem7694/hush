@@ -208,6 +208,29 @@ describe('evaluateCondition', () => {
       expect(evaluateCondition(cond, ctxWithTime('2026-01-14T13:45:00Z'))).toBe(true);
       expect(evaluateCondition(cond, ctxWithTime('2026-07-14T12:45:00Z'))).toBe(true);
     });
+
+    it('keeps the prior day for post-midnight portions of a wrapped window', () => {
+      const cond: Condition = {
+        time_window: {
+          start: '22:00',
+          end: '06:00',
+          timezone: 'UTC',
+          days: ['fri'],
+        },
+      };
+      expect(evaluateCondition(cond, ctxWithTime('2026-01-17T03:00:00Z'))).toBe(true);
+    });
+
+    it('fails closed for unknown timezone identifiers', () => {
+      const cond: Condition = {
+        time_window: {
+          start: '09:00',
+          end: '17:00',
+          timezone: 'America/NeYork',
+        },
+      };
+      expect(evaluateCondition(cond, ctxWithTime('2026-01-14T13:30:00Z'))).toBe(false);
+    });
   });
 
   // -----------------------------------------------------------------------

@@ -17,6 +17,7 @@ import type {
   PostureExtension,
 } from './extensions.js';
 import { parseOrThrow } from './parse.js';
+import { compileSafePolicyRegex } from './regex.js';
 
 export type Decision = 'allow' | 'warn' | 'deny';
 
@@ -484,7 +485,7 @@ function evaluateSecretPatterns(
 
   for (const pattern of rule.patterns ?? []) {
     try {
-      if (new RegExp(pattern.pattern).test(content)) {
+      if (compileSafePolicyRegex(pattern.pattern).regex.test(content)) {
         return denyResult(
           `rules.secret_patterns.patterns.${pattern.name}`,
           `content matched secret pattern '${pattern.name}'`,
@@ -492,8 +493,13 @@ function evaluateSecretPatterns(
           posture,
         );
       }
-    } catch {
-      // Invalid regex -- skip (fail-open for individual pattern match failures).
+    } catch (error) {
+      return denyResult(
+        `rules.secret_patterns.patterns.${pattern.name}.pattern`,
+        `secret pattern '${pattern.name}' is invalid: ${error instanceof Error ? error.message : String(error)}`,
+        originProfileId,
+        posture,
+      );
     }
   }
 
@@ -513,7 +519,7 @@ function evaluatePatchIntegrity(
   const forbiddenPatterns = rule.forbidden_patterns ?? [];
   for (let index = 0; index < forbiddenPatterns.length; index++) {
     try {
-      if (new RegExp(forbiddenPatterns[index]).test(content)) {
+      if (compileSafePolicyRegex(forbiddenPatterns[index]).regex.test(content)) {
         return denyResult(
           `rules.patch_integrity.forbidden_patterns[${index}]`,
           'patch content matched a forbidden pattern',
@@ -521,8 +527,13 @@ function evaluatePatchIntegrity(
           posture,
         );
       }
-    } catch {
-      // Invalid regex -- skip.
+    } catch (error) {
+      return denyResult(
+        `rules.patch_integrity.forbidden_patterns[${index}]`,
+        `patch forbidden pattern is invalid: ${error instanceof Error ? error.message : String(error)}`,
+        originProfileId,
+        posture,
+      );
     }
   }
 
@@ -576,7 +587,7 @@ function evaluateShellRule(
   const forbiddenPatterns = rule.forbidden_patterns ?? [];
   for (let index = 0; index < forbiddenPatterns.length; index++) {
     try {
-      if (new RegExp(forbiddenPatterns[index]).test(target)) {
+      if (compileSafePolicyRegex(forbiddenPatterns[index]).regex.test(target)) {
         return denyResult(
           `rules.shell_commands.forbidden_patterns[${index}]`,
           'shell command matched a forbidden pattern',
@@ -584,8 +595,13 @@ function evaluateShellRule(
           posture,
         );
       }
-    } catch {
-      // Invalid regex -- skip.
+    } catch (error) {
+      return denyResult(
+        `rules.shell_commands.forbidden_patterns[${index}]`,
+        `shell forbidden pattern is invalid: ${error instanceof Error ? error.message : String(error)}`,
+        originProfileId,
+        posture,
+      );
     }
   }
 

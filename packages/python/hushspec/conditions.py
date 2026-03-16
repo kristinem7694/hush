@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, tzinfo
 from typing import Any, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from hushspec.evaluate import EvaluationAction, EvaluationResult, evaluate
 from hushspec.schema import HushSpec
@@ -134,11 +135,6 @@ def _check_time_window(tw: TimeWindowCondition, context: RuntimeContext) -> bool
 
     hour, minute, day_of_week = now
 
-    if tw.days:
-        day_abbrev = _day_abbreviation(day_of_week)
-        if not any(d.lower() == day_abbrev for d in tw.days):
-            return False
-
     start_parsed = _parse_hhmm(tw.start)
     end_parsed = _parse_hhmm(tw.end)
     if start_parsed is None or end_parsed is None:
@@ -146,10 +142,20 @@ def _check_time_window(tw: TimeWindowCondition, context: RuntimeContext) -> bool
 
     start_h, start_m = start_parsed
     end_h, end_m = end_parsed
-
     current_minutes = hour * 60 + minute
     start_minutes = start_h * 60 + start_m
     end_minutes = end_h * 60 + end_m
+    wraps_midnight = start_minutes > end_minutes
+
+    if tw.days:
+        effective_day = (
+            (day_of_week + 6) % 7
+            if wraps_midnight and current_minutes < end_minutes
+            else day_of_week
+        )
+        day_abbrev = _day_abbreviation(effective_day)
+        if not any(d.lower() == day_abbrev for d in tw.days):
+            return False
 
     if start_minutes == end_minutes:
         return True
@@ -190,12 +196,18 @@ def _resolve_current_time(
             dt = datetime.fromisoformat(context.current_time.replace("Z", "+00:00"))
         except (ValueError, TypeError):
             return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
     else:
         dt = datetime.now(timezone.utc)
 
     tz_name = tz or "UTC"
-    offset_hours = _parse_timezone_offset(tz_name)
-    adjusted = dt + timedelta(hours=offset_hours)
+    resolved_timezone = _resolve_timezone(tz_name)
+    if resolved_timezone is None:
+        return None
+    adjusted = dt.astimezone(resolved_timezone)
 
     hour = adjusted.hour
     minute = adjusted.minute
@@ -204,64 +216,63 @@ def _resolve_current_time(
     return (hour, minute, day_of_week)
 
 
-_TIMEZONE_OFFSETS: dict[str, int] = {
+_FIXED_TIMEZONE_OFFSETS: dict[str, int] = {
     "UTC": 0,
     "utc": 0,
     "Etc/UTC": 0,
     "Etc/GMT": 0,
     "GMT": 0,
-    "America/New_York": -5,
-    "US/Eastern": -5,
-    "EST": -5,
-    "America/Chicago": -6,
-    "US/Central": -6,
-    "CST": -6,
-    "America/Denver": -7,
-    "US/Mountain": -7,
-    "MST": -7,
-    "America/Los_Angeles": -8,
-    "US/Pacific": -8,
-    "PST": -8,
-    "Europe/London": 0,
+    "EST": -5 * 60,
+    "CST": -6 * 60,
+    "MST": -7 * 60,
+    "PST": -8 * 60,
     "GB": 0,
-    "Europe/Paris": 1,
-    "Europe/Berlin": 1,
-    "CET": 1,
-    "Europe/Helsinki": 2,
-    "EET": 2,
-    "Asia/Tokyo": 9,
-    "Japan": 9,
-    "JST": 9,
-    "Asia/Shanghai": 8,
-    "Asia/Hong_Kong": 8,
-    "PRC": 8,
-    "Asia/Kolkata": 5,
-    "Asia/Calcutta": 5,
-    "IST": 5,
+    "CET": 60,
+    "EET": 120,
+    "Japan": 9 * 60,
+    "JST": 9 * 60,
+    "PRC": 8 * 60,
+    "IST": 5 * 60 + 30,
 }
 
 
-def _parse_timezone_offset(tz: str) -> int:
-    if tz in _TIMEZONE_OFFSETS:
-        return _TIMEZONE_OFFSETS[tz]
+def _resolve_timezone(tz: str) -> Optional[tzinfo]:
+    try:
+        return ZoneInfo(tz)
+    except ZoneInfoNotFoundError:
+        pass
+
+    if tz in _FIXED_TIMEZONE_OFFSETS:
+        return timezone(timedelta(minutes=_FIXED_TIMEZONE_OFFSETS[tz]))
 
     if tz.startswith("+"):
-        return _parse_offset_value(tz[1:])
+        offset_minutes = _parse_offset_value(tz[1:])
+        if offset_minutes is None:
+            return None
+        return timezone(timedelta(minutes=offset_minutes))
     if tz.startswith("-"):
-        return -_parse_offset_value(tz[1:])
+        offset_minutes = _parse_offset_value(tz[1:])
+        if offset_minutes is None:
+            return None
+        return timezone(timedelta(minutes=-offset_minutes))
 
-    return 0
+    return None
 
 
-def _parse_offset_value(s: str) -> int:
+def _parse_offset_value(s: str) -> Optional[int]:
     if ":" in s:
-        hours_str = s.split(":")[0]
+        hours_str, minutes_str = s.split(":", 1)
     else:
         hours_str = s
+        minutes_str = "0"
     try:
-        return int(hours_str)
+        hours = int(hours_str)
+        minutes = int(minutes_str)
     except ValueError:
-        return 0
+        return None
+    if hours < 0 or hours > 23 or minutes < 0 or minutes > 59:
+        return None
+    return hours * 60 + minutes
 
 
 

@@ -192,6 +192,65 @@ func TestTimeWindowSameStartEndMeansAllDay(t *testing.T) {
 	}
 }
 
+func TestTimeWindowSupportsMinuteOffsets(t *testing.T) {
+	cond := &Condition{
+		TimeWindow: &TimeWindowCondition{
+			Start:    "05:30",
+			End:      "06:30",
+			Timezone: "+05:30",
+		},
+	}
+	if !EvaluateCondition(cond, ctxWithTimeStr("2026-01-14T00:15:00Z")) {
+		t.Error("expected +05:30 offset to match inside the window")
+	}
+	if EvaluateCondition(cond, ctxWithTimeStr("2026-01-14T01:15:00Z")) {
+		t.Error("expected +05:30 offset to reject outside the window")
+	}
+}
+
+func TestTimeWindowUsesDSTForIANATimezones(t *testing.T) {
+	cond := &Condition{
+		TimeWindow: &TimeWindowCondition{
+			Start:    "08:30",
+			End:      "09:30",
+			Timezone: "America/New_York",
+		},
+	}
+	if !EvaluateCondition(cond, ctxWithTimeStr("2026-01-14T13:45:00Z")) {
+		t.Error("expected winter New York time to match")
+	}
+	if !EvaluateCondition(cond, ctxWithTimeStr("2026-07-14T12:45:00Z")) {
+		t.Error("expected summer New York time to match under DST")
+	}
+}
+
+func TestTimeWindowWrapsMidnightWithDayFilter(t *testing.T) {
+	cond := &Condition{
+		TimeWindow: &TimeWindowCondition{
+			Start:    "22:00",
+			End:      "06:00",
+			Timezone: "UTC",
+			Days:     []string{"fri"},
+		},
+	}
+	if !EvaluateCondition(cond, ctxWithTimeStr("2026-01-17T03:00:00Z")) {
+		t.Error("expected Saturday early-morning time to count as Friday night")
+	}
+}
+
+func TestTimeWindowInvalidTimezoneFailsClosed(t *testing.T) {
+	cond := &Condition{
+		TimeWindow: &TimeWindowCondition{
+			Start:    "09:00",
+			End:      "17:00",
+			Timezone: "America/NeYork",
+		},
+	}
+	if EvaluateCondition(cond, ctxWithTimeStr("2026-01-14T13:30:00Z")) {
+		t.Error("expected invalid timezone to fail closed")
+	}
+}
+
 func TestAllOfRequiresAllConditions(t *testing.T) {
 	cond := &Condition{
 		AllOf: []Condition{

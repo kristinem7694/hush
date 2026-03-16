@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluate, type HushSpec } from '../src/index.js';
+import { evaluate, parseOrThrow, type HushSpec } from '../src/index.js';
 
 describe('evaluate', () => {
   it('preserves base tool blocks when an origin profile adds its own tool rules', () => {
@@ -154,5 +154,45 @@ describe('evaluate', () => {
 
     expect(result.decision).toBe('deny');
     expect(result.matched_rule).toBe('rules.remote_desktop_channels.clipboard');
+  });
+
+  it('enforces RE2-style inline flags at runtime', () => {
+    const spec = parseOrThrow(`
+hushspec: "0.1.0"
+rules:
+  shell_commands:
+    enabled: true
+    forbidden_patterns:
+      - "(?i)rm\\\\s+-rf\\\\s+/"
+`);
+
+    const result = evaluate(spec, {
+      type: 'shell_command',
+      target: 'RM -RF /tmp/demo',
+    });
+
+    expect(result.decision).toBe('deny');
+    expect(result.matched_rule).toBe('rules.shell_commands.forbidden_patterns[0]');
+  });
+
+  it('fails closed when a runtime-only regex is outside the RE2 subset', () => {
+    const spec: HushSpec = {
+      hushspec: '0.1.0',
+      rules: {
+        shell_commands: {
+          enabled: true,
+          forbidden_patterns: ['(?<=sudo)rm\\s+-rf'],
+        },
+      },
+    };
+
+    const result = evaluate(spec, {
+      type: 'shell_command',
+      target: 'sudo rm -rf /tmp/demo',
+    });
+
+    expect(result.decision).toBe('deny');
+    expect(result.matched_rule).toBe('rules.shell_commands.forbidden_patterns[0]');
+    expect(result.reason).toContain('RE2 subset');
   });
 });

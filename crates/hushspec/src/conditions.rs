@@ -243,7 +243,7 @@ fn resolve_current_time(context: &RuntimeContext, timezone: Option<&str>) -> Opt
     let adjusted = if let Ok(tz) = chrono_tz::Tz::from_str(tz) {
         utc_now.with_timezone(&tz).fixed_offset()
     } else {
-        let offset_minutes = parse_timezone_offset(tz);
+        let offset_minutes = parse_timezone_offset(tz)?;
         let offset = FixedOffset::east_opt(offset_minutes.saturating_mul(60))?;
         utc_now.with_timezone(&offset)
     };
@@ -262,39 +262,46 @@ fn resolve_current_time(context: &RuntimeContext, timezone: Option<&str>) -> Opt
 /// - Fixed aliases like `"EST"` or `"JST"`
 ///
 /// IANA timezone names are resolved in `resolve_current_time` via `chrono-tz`.
-fn parse_timezone_offset(tz: &str) -> i32 {
+fn parse_timezone_offset(tz: &str) -> Option<i32> {
     match tz {
-        "UTC" | "utc" | "Etc/UTC" | "Etc/GMT" | "GMT" => 0,
-        "US/Eastern" | "EST" => -5 * 60,
-        "US/Central" | "CST" => -6 * 60,
-        "US/Mountain" | "MST" => -7 * 60,
-        "US/Pacific" | "PST" => -8 * 60,
-        "GB" => 0,
-        "CET" => 60,
-        "EET" => 120,
-        "Japan" | "JST" => 9 * 60,
-        "PRC" => 8 * 60,
-        "IST" => 5 * 60 + 30,
+        "UTC" | "utc" | "Etc/UTC" | "Etc/GMT" | "GMT" => Some(0),
+        "US/Eastern" | "EST" => Some(-5 * 60),
+        "US/Central" | "CST" => Some(-6 * 60),
+        "US/Mountain" | "MST" => Some(-7 * 60),
+        "US/Pacific" | "PST" => Some(-8 * 60),
+        "GB" => Some(0),
+        "CET" => Some(60),
+        "EET" => Some(120),
+        "Japan" | "JST" => Some(9 * 60),
+        "PRC" => Some(8 * 60),
+        "IST" => Some(5 * 60 + 30),
         // Numeric offset
         _ => {
             if let Some(rest) = tz.strip_prefix('+') {
                 parse_offset_value(rest)
             } else if let Some(rest) = tz.strip_prefix('-') {
-                -parse_offset_value(rest)
+                parse_offset_value(rest).map(|value| -value)
             } else {
-                0 // Unknown timezone, treat as UTC (fail-closed would deny, but we let the check continue)
+                None
             }
         }
     }
 }
 
-fn parse_offset_value(s: &str) -> i32 {
+fn parse_offset_value(s: &str) -> Option<i32> {
     if let Some((hours, minutes)) = s.split_once(':') {
-        let hours = hours.parse::<i32>().unwrap_or(0);
-        let minutes = minutes.parse::<i32>().unwrap_or(0);
-        hours.saturating_mul(60).saturating_add(minutes)
+        let hours = hours.parse::<i32>().ok()?;
+        let minutes = minutes.parse::<i32>().ok()?;
+        if !(0..=23).contains(&hours) || !(0..=59).contains(&minutes) {
+            return None;
+        }
+        Some(hours.saturating_mul(60).saturating_add(minutes))
     } else {
-        s.parse::<i32>().unwrap_or(0).saturating_mul(60)
+        let hours = s.parse::<i32>().ok()?;
+        if !(0..=23).contains(&hours) {
+            return None;
+        }
+        Some(hours.saturating_mul(60))
     }
 }
 
@@ -755,6 +762,21 @@ mod tests {
             ..Default::default()
         };
         assert!(evaluate_condition(&cond, &ctx));
+    }
+
+    #[test]
+    fn time_window_invalid_timezone_fails_closed() {
+        let ctx = ctx_with_time("2026-01-14T13:30:00Z");
+        let cond = Condition {
+            time_window: Some(TimeWindowCondition {
+                start: "09:00".to_string(),
+                end: "17:00".to_string(),
+                timezone: Some("America/NeYork".to_string()),
+                days: vec![],
+            }),
+            ..Default::default()
+        };
+        assert!(!evaluate_condition(&cond, &ctx));
     }
 
     #[test]

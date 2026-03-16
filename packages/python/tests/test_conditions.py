@@ -159,6 +159,40 @@ class TestTimeWindowConditions:
         )
         assert evaluate_condition(cond, ctx_with_time("2026-01-14T03:00:00Z")) is True
 
+    def test_supports_minute_offsets(self):
+        cond = Condition(
+            time_window=TimeWindowCondition(
+                start="05:30", end="06:30", timezone="+05:30"
+            )
+        )
+        assert evaluate_condition(cond, ctx_with_time("2026-01-14T00:15:00Z")) is True
+        assert evaluate_condition(cond, ctx_with_time("2026-01-14T01:15:00Z")) is False
+
+    def test_uses_dst_for_iana_timezones(self):
+        cond = Condition(
+            time_window=TimeWindowCondition(
+                start="08:30", end="09:30", timezone="America/New_York"
+            )
+        )
+        assert evaluate_condition(cond, ctx_with_time("2026-01-14T13:45:00Z")) is True
+        assert evaluate_condition(cond, ctx_with_time("2026-07-14T12:45:00Z")) is True
+
+    def test_wraps_midnight_with_day_filter(self):
+        cond = Condition(
+            time_window=TimeWindowCondition(
+                start="22:00", end="06:00", timezone="UTC", days=["fri"]
+            )
+        )
+        assert evaluate_condition(cond, ctx_with_time("2026-01-17T03:00:00Z")) is True
+
+    def test_invalid_timezone_fails_closed(self):
+        cond = Condition(
+            time_window=TimeWindowCondition(
+                start="09:00", end="17:00", timezone="America/NeYork"
+            )
+        )
+        assert evaluate_condition(cond, ctx_with_time("2026-01-14T13:30:00Z")) is False
+
 
 
 # Compound conditions

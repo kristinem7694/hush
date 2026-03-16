@@ -41,7 +41,10 @@ import {
   TOP_LEVEL_KEYS_SET,
   TRANSITION_TRIGGERS_SET,
 } from './generated/contract.js';
+import { compilePolicyRegex, isSafeRegex } from './regex.js';
 import { isSupported } from './version.js';
+
+export { isSafeRegex };
 
 export interface ValidationError {
   code: string;
@@ -830,35 +833,9 @@ function validateBounds(
   return value;
 }
 
-/**
- * Pattern that detects regex features outside the RE2 subset.
- *
- * HushSpec requires all regex patterns to be RE2-compatible to prevent ReDoS
- * attacks. JavaScript's RegExp uses a backtracking engine that is vulnerable
- * to catastrophic backtracking with certain pattern constructs. By restricting
- * patterns to the RE2 subset, we ensure safe O(mn) evaluation across all SDKs.
- *
- * Disallowed features:
- * - Backreferences: \1, \2, ..., \k<name>
- * - Lookahead: (?=...), (?!...)
- * - Lookbehind: (?<=...), (?<!...)
- * - Atomic groups: (?>...)
- * - Possessive quantifiers: *+, ++, ?+
- * - Conditional patterns: (?(...)...|...)
- * - Recursive patterns: (?R), (?1), (?2), ...
- * - Named backreferences: (?P=name)
- * - Subroutine calls: \g<name>
- */
-const RE2_DISALLOWED = /\\[1-9]|\\k<|\(\?[=!]|\(\?<[=!]|\(\?>|\*\+|\+\+|\?\+|\(\?\(|\(\?R\)|\(\?\d+\)|\(\?P=|\\g</;
-
-export function isSafeRegex(pattern: string): boolean {
-  return !RE2_DISALLOWED.test(pattern);
-}
-
 function validateRegex(pattern: string, ctx: ValidationContext, path: string): void {
   try {
-    // eslint-disable-next-line no-new
-    new RegExp(pattern);
+    compilePolicyRegex(pattern);
   } catch (error) {
     addError(
       ctx,
