@@ -436,8 +436,12 @@ pub mod http {
             assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
             assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
             assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
-            assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1))));
-            assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1))));
+            assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::new(
+                0xfc00, 0, 0, 0, 0, 0, 0, 1
+            ))));
+            assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::new(
+                0xfe80, 0, 0, 0, 0, 0, 0, 1
+            ))));
             assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
 
             assert!(!is_private_ip(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));

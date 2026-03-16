@@ -34,6 +34,9 @@ jobs:
       - name: Check generated SDK models
         run: python3 scripts/generate_sdk_models.py --check
 
+      - name: Check generated TypeScript builtins
+        run: python3 scripts/generate_ts_builtins.py --check
+
   rust:
     name: Rust
     runs-on: ubuntu-latest

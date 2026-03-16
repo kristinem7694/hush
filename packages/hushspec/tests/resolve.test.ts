@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import YAML from 'yaml';
 import { parseOrThrow } from '../src/parse.js';
 import { resolve, resolveFromFile, createCompositeLoader } from '../src/resolve.js';
 import { loadBuiltin, BUILTIN_NAMES } from '../src/builtin.js';
@@ -141,6 +142,15 @@ describe('builtin loader', () => {
     } finally {
       process.chdir(originalCwd);
       rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('matches the canonical built-in ruleset YAML', () => {
+    for (const name of BUILTIN_NAMES) {
+      const expected = YAML.parse(
+        readFileSync(new URL(`../../../rulesets/${name}.yaml`, import.meta.url), 'utf8'),
+      );
+      expect(loadBuiltin(name)).toEqual(expected);
     }
   });
 });
