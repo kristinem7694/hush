@@ -282,6 +282,10 @@ rules:
     block:
       - "bad_tool"
     default: allow
+  remote_desktop_channels:
+    enabled: false
+  input_injection:
+    enabled: false
 "#,
     )
     .unwrap();
@@ -297,6 +301,13 @@ rules:
         .stdout(predicate::str::contains("L008"))
         // L010: unreachable allow
         .stdout(predicate::str::contains("L010"))
+        // L007: explicitly disabled rule blocks
+        .stdout(predicate::str::contains(
+            "rules.remote_desktop_channels is explicitly disabled",
+        ))
+        .stdout(predicate::str::contains(
+            "rules.input_injection is explicitly disabled",
+        ))
         // L009: missing secret patterns
         .stdout(predicate::str::contains("L009"));
 }
@@ -508,6 +519,48 @@ rules:
     assert!(first.get("old_decision").is_some());
     assert!(first.get("new_decision").is_some());
     assert!(first.get("change_type").is_some());
+}
+
+#[test]
+fn diff_detects_path_allowlist_changes() {
+    let tmp = TempDir::new().unwrap();
+
+    let old_path = tmp.path().join("old-allowlist.yaml");
+    fs::write(
+        &old_path,
+        r#"hushspec: "0.1.0"
+name: old
+rules:
+  path_allowlist:
+    enabled: true
+    read:
+      - "/workspace/**"
+"#,
+    )
+    .unwrap();
+
+    let new_path = tmp.path().join("new-allowlist.yaml");
+    fs::write(
+        &new_path,
+        r#"hushspec: "0.1.0"
+name: new
+rules:
+  path_allowlist:
+    enabled: true
+    read:
+      - "/sandbox/**"
+"#,
+    )
+    .unwrap();
+
+    hushspec()
+        .arg("diff")
+        .arg(old_path.to_str().unwrap())
+        .arg(new_path.to_str().unwrap())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Decision changes"))
+        .stdout(predicate::str::contains("file_read"));
 }
 
 #[test]

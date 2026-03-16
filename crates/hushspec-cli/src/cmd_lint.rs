@@ -595,6 +595,14 @@ fn check_disabled_rules(rules: &hushspec::Rules, file: &str, findings: &mut Vec<
             "rules.computer_use",
             rules.computer_use.as_ref().map(|r| r.enabled),
         ),
+        (
+            "rules.remote_desktop_channels",
+            rules.remote_desktop_channels.as_ref().map(|r| r.enabled),
+        ),
+        (
+            "rules.input_injection",
+            rules.input_injection.as_ref().map(|r| r.enabled),
+        ),
     ];
 
     for &(name, enabled) in disabled_checks {

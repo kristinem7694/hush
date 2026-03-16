@@ -3,7 +3,8 @@ use crate::conditions::{Condition, RuntimeContext, evaluate_condition};
 use crate::extensions::{OriginProfile, PostureExtension, TransitionTrigger};
 use crate::rules::{
     ComputerUseMode, ComputerUseRule, DefaultAction, EgressRule, ForbiddenPathsRule,
-    PatchIntegrityRule, PathAllowlistRule, SecretPatternsRule, ShellCommandsRule, ToolAccessRule,
+    InputInjectionRule, PatchIntegrityRule, PathAllowlistRule, RemoteDesktopChannelsRule,
+    SecretPatternsRule, ShellCommandsRule, ToolAccessRule,
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -122,6 +123,7 @@ pub fn evaluate(spec: &HushSpec, action: &EvaluationAction) -> EvaluationResult 
             evaluate_shell_command(spec, action, matched_profile, posture, origin_profile_id)
         }
         "computer_use" => evaluate_computer_use(spec, action, posture, origin_profile_id),
+        "input_inject" => evaluate_input_injection(spec, action, posture, origin_profile_id),
         _ => EvaluationResult {
             decision: Decision::Allow,
             matched_rule: None,
@@ -207,6 +209,9 @@ pub fn evaluate_with_context(
         ),
         "computer_use" => {
             evaluate_computer_use(&effective_spec, action, posture, origin_profile_id)
+        }
+        "input_inject" => {
+            evaluate_input_injection(&effective_spec, action, posture, origin_profile_id)
         }
         _ => EvaluationResult {
             decision: Decision::Allow,
@@ -435,12 +440,46 @@ fn evaluate_computer_use(
     posture: Option<PostureResult>,
     origin_profile_id: Option<String>,
 ) -> EvaluationResult {
-    if let Some(rule) = spec
+    let target = action.target.as_deref().unwrap_or_default();
+    let computer_use_result = spec
         .rules
         .as_ref()
         .and_then(|rules| rules.computer_use.as_ref())
+        .map(|rule| {
+            evaluate_computer_use_rule(rule, target, posture.clone(), origin_profile_id.clone())
+        });
+    let remote_desktop_result = spec
+        .rules
+        .as_ref()
+        .and_then(|rules| rules.remote_desktop_channels.as_ref())
+        .and_then(|rule| {
+            evaluate_remote_desktop_channels_rule(
+                rule,
+                target,
+                posture.clone(),
+                origin_profile_id.clone(),
+            )
+        });
+
+    match (computer_use_result, remote_desktop_result) {
+        (Some(left), Some(right)) => more_restrictive_result(left, right),
+        (Some(result), None) | (None, Some(result)) => result,
+        (None, None) => allow_result(None, None, origin_profile_id, posture),
+    }
+}
+
+fn evaluate_input_injection(
+    spec: &HushSpec,
+    action: &EvaluationAction,
+    posture: Option<PostureResult>,
+    origin_profile_id: Option<String>,
+) -> EvaluationResult {
+    if let Some(rule) = spec
+        .rules
+        .as_ref()
+        .and_then(|rules| rules.input_injection.as_ref())
     {
-        return evaluate_computer_use_rule(
+        return evaluate_input_injection_rule(
             rule,
             action.target.as_deref().unwrap_or_default(),
             posture,
@@ -721,6 +760,102 @@ fn evaluate_computer_use_rule(
             origin_profile_id,
             posture,
         ),
+    }
+}
+
+fn evaluate_remote_desktop_channels_rule(
+    rule: &RemoteDesktopChannelsRule,
+    target: &str,
+    posture: Option<PostureResult>,
+    origin_profile_id: Option<String>,
+) -> Option<EvaluationResult> {
+    if !rule.enabled {
+        return None;
+    }
+
+    let (field, allowed) = match target {
+        "remote.clipboard" => ("clipboard", rule.clipboard),
+        "remote.file_transfer" => ("file_transfer", rule.file_transfer),
+        "remote.audio" => ("audio", rule.audio),
+        "remote.drive_mapping" => ("drive_mapping", rule.drive_mapping),
+        _ => return None,
+    };
+
+    if allowed {
+        return Some(allow_result(
+            Some(format!("rules.remote_desktop_channels.{field}")),
+            Some(format!("remote desktop channel '{field}' is enabled")),
+            origin_profile_id,
+            posture,
+        ));
+    }
+
+    Some(deny_result(
+        Some(format!("rules.remote_desktop_channels.{field}")),
+        Some(format!("remote desktop channel '{field}' is disabled")),
+        origin_profile_id,
+        posture,
+    ))
+}
+
+fn evaluate_input_injection_rule(
+    rule: &InputInjectionRule,
+    target: &str,
+    posture: Option<PostureResult>,
+    origin_profile_id: Option<String>,
+) -> EvaluationResult {
+    if !rule.enabled {
+        return allow_result(None, None, origin_profile_id, posture);
+    }
+
+    if rule.allowed_types.is_empty() {
+        return deny_result(
+            Some("rules.input_injection.allowed_types".to_string()),
+            Some("input injection is not allowed when allowed_types is empty".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+
+    if rule.allowed_types.iter().any(|allowed| allowed == target) {
+        return allow_result(
+            Some("rules.input_injection.allowed_types".to_string()),
+            Some("input injection type is explicitly allowed".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+
+    deny_result(
+        Some("rules.input_injection.allowed_types".to_string()),
+        Some("input injection type is not allowed".to_string()),
+        origin_profile_id,
+        posture,
+    )
+}
+
+fn decision_rank(decision: &Decision) -> u8 {
+    match decision {
+        Decision::Allow => 1,
+        Decision::Warn => 2,
+        Decision::Deny => 3,
+    }
+}
+
+fn more_restrictive_result(left: EvaluationResult, right: EvaluationResult) -> EvaluationResult {
+    let left_rank = decision_rank(&left.decision);
+    let right_rank = decision_rank(&right.decision);
+    if right_rank > left_rank {
+        return right;
+    }
+    if left_rank > right_rank {
+        return left;
+    }
+
+    if right.matched_rule.is_some() {
+        right
+    } else {
+        left
     }
 }
 

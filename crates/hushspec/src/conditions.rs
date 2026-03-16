@@ -353,25 +353,11 @@ fn resolve_map_field(
 /// - String: exact equality
 /// - Boolean: exact equality
 /// - Integer: exact numeric equality
-/// - Array of strings (expected): actual must be one of the listed values
+/// - Array of expected values: actual must match at least one listed value
 /// - Scalar expected vs array actual: true if scalar is a member of the array
-fn match_value(actual: &Option<serde_json::Value>, expected: &serde_json::Value) -> bool {
-    let Some(actual) = actual else {
-        // Missing context field -> fail-closed (condition fails).
-        return false;
-    };
-
+fn values_equal(actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
     match expected {
-        serde_json::Value::String(expected_str) => {
-            match actual {
-                serde_json::Value::String(actual_str) => actual_str == expected_str,
-                // Scalar expected vs array actual: membership check
-                serde_json::Value::Array(arr) => arr
-                    .iter()
-                    .any(|v| v.as_str() == Some(expected_str.as_str())),
-                _ => false,
-            }
-        }
+        serde_json::Value::String(expected_str) => actual.as_str() == Some(expected_str.as_str()),
         serde_json::Value::Bool(expected_bool) => actual.as_bool() == Some(*expected_bool),
         serde_json::Value::Number(expected_num) => {
             if let Some(expected_i64) = expected_num.as_i64() {
@@ -384,12 +370,30 @@ fn match_value(actual: &Option<serde_json::Value>, expected: &serde_json::Value)
                 false
             }
         }
-        serde_json::Value::Array(expected_arr) => {
-            // Array of expected values: actual must be one of them (OR).
-            actual
-                .as_str()
-                .is_some_and(|actual_s| expected_arr.iter().any(|v| v.as_str() == Some(actual_s)))
-        }
+        _ => false,
+    }
+}
+
+fn matches_scalar_or_membership(actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
+    match actual {
+        serde_json::Value::Array(arr) => arr.iter().any(|item| values_equal(item, expected)),
+        _ => values_equal(actual, expected),
+    }
+}
+
+fn match_value(actual: &Option<serde_json::Value>, expected: &serde_json::Value) -> bool {
+    let Some(actual) = actual else {
+        // Missing context field -> fail-closed (condition fails).
+        return false;
+    };
+
+    match expected {
+        serde_json::Value::String(_)
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_) => matches_scalar_or_membership(actual, expected),
+        serde_json::Value::Array(expected_arr) => expected_arr
+            .iter()
+            .any(|candidate| matches_scalar_or_membership(actual, candidate)),
         _ => false,
     }
 }
@@ -525,6 +529,44 @@ mod tests {
             all_of: None,
             any_of: None,
             not: None,
+        };
+        assert!(evaluate_condition(&cond, &ctx));
+    }
+
+    #[test]
+    fn context_condition_array_or_match_numbers() {
+        let cond = Condition {
+            time_window: None,
+            context: Some(HashMap::from([(
+                "session.action_count".to_string(),
+                serde_json::json!([1, 2, 3]),
+            )])),
+            all_of: None,
+            any_of: None,
+            not: None,
+        };
+        let ctx = RuntimeContext {
+            session: HashMap::from([("action_count".to_string(), serde_json::json!(2))]),
+            ..Default::default()
+        };
+        assert!(evaluate_condition(&cond, &ctx));
+    }
+
+    #[test]
+    fn context_condition_array_or_match_booleans() {
+        let cond = Condition {
+            time_window: None,
+            context: Some(HashMap::from([(
+                "request.interactive".to_string(),
+                serde_json::json!([true]),
+            )])),
+            all_of: None,
+            any_of: None,
+            not: None,
+        };
+        let ctx = RuntimeContext {
+            request: HashMap::from([("interactive".to_string(), serde_json::json!(true))]),
+            ..Default::default()
         };
         assert!(evaluate_condition(&cond, &ctx));
     }

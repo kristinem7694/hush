@@ -1,0 +1,108 @@
+import { describe, expect, it } from 'vitest';
+import { evaluate, type HushSpec } from '../src/index.js';
+
+describe('evaluate', () => {
+  it('preserves base tool blocks when an origin profile adds its own tool rules', () => {
+    const spec: HushSpec = {
+      hushspec: '0.1.0',
+      name: 'origin-tool-access',
+      rules: {
+        tool_access: {
+          enabled: true,
+          block: ['dangerous_tool'],
+          default: 'allow',
+        },
+      },
+      extensions: {
+        origins: {
+          default_behavior: 'minimal_profile',
+          profiles: [
+            {
+              id: 'slack-prod',
+              match: { provider: 'slack' },
+              tool_access: {
+                enabled: true,
+                allow: ['dangerous_tool'],
+                default: 'allow',
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = evaluate(spec, {
+      type: 'tool_call',
+      target: 'dangerous_tool',
+      origin: { provider: 'slack' },
+    });
+
+    expect(result.decision).toBe('deny');
+    expect(result.matched_rule).toBe('rules.tool_access.block');
+  });
+
+  it('preserves base egress restrictions when an origin profile adds its own egress rules', () => {
+    const spec: HushSpec = {
+      hushspec: '0.1.0',
+      name: 'origin-egress',
+      rules: {
+        egress: {
+          enabled: true,
+          block: ['evil.example.com'],
+          default: 'allow',
+        },
+      },
+      extensions: {
+        origins: {
+          default_behavior: 'minimal_profile',
+          profiles: [
+            {
+              id: 'public-room',
+              match: { provider: 'slack' },
+              egress: {
+                enabled: true,
+                allow: ['evil.example.com'],
+                default: 'allow',
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = evaluate(spec, {
+      type: 'egress',
+      target: 'evil.example.com',
+      origin: { provider: 'slack' },
+    });
+
+    expect(result.decision).toBe('deny');
+    expect(result.matched_rule).toBe('rules.egress.block');
+  });
+
+  it('continues to path allowlist checks after a forbidden-path exception', () => {
+    const spec: HushSpec = {
+      hushspec: '0.1.0',
+      name: 'path-guards',
+      rules: {
+        forbidden_paths: {
+          enabled: true,
+          patterns: ['/secret/**'],
+          exceptions: ['/secret/public/**'],
+        },
+        path_allowlist: {
+          enabled: true,
+          read: ['/workspace/**'],
+        },
+      },
+    };
+
+    const result = evaluate(spec, {
+      type: 'file_read',
+      target: '/secret/public/readme.txt',
+    });
+
+    expect(result.decision).toBe('deny');
+    expect(result.matched_rule).toBe('rules.path_allowlist');
+  });
+});

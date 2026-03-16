@@ -137,6 +137,14 @@ function findFirstMatch(target: string, patterns: string[]): number | undefined 
   return undefined;
 }
 
+function hasPatterns(patterns: string[] | undefined): boolean {
+  return (patterns?.length ?? 0) > 0;
+}
+
+function isRuleActive(rule: { enabled?: boolean } | undefined): boolean {
+  return rule != null && rule.enabled !== false;
+}
+
 function prefixedRule(prefix: string | undefined, suffix: string): string | undefined {
   return prefix != null ? `${prefix}.${suffix}` : undefined;
 }
@@ -613,30 +621,28 @@ function evaluateForbiddenPaths(
   target: string,
   posture: PostureResult | undefined,
   originProfileId: string | undefined,
-): EvaluationResult | undefined {
+): { denied?: EvaluationResult; exceptionMatched: boolean } {
   if (rule.enabled === false) {
-    return undefined;
+    return { exceptionMatched: false };
   }
 
   if (findFirstMatch(target, rule.exceptions ?? []) != null) {
-    return allowResult(
-      'rules.forbidden_paths.exceptions',
-      'path matched an explicit exception',
-      originProfileId,
-      posture,
-    );
+    return { exceptionMatched: true };
   }
 
   if (findFirstMatch(target, rule.patterns ?? []) != null) {
-    return denyResult(
-      'rules.forbidden_paths.patterns',
-      'path matched a forbidden pattern',
-      originProfileId,
-      posture,
-    );
+    return {
+      denied: denyResult(
+        'rules.forbidden_paths.patterns',
+        'path matched a forbidden pattern',
+        originProfileId,
+        posture,
+      ),
+      exceptionMatched: false,
+    };
   }
 
-  return undefined;
+  return { exceptionMatched: false };
 }
 
 function evaluatePathAllowlist(
@@ -692,6 +698,8 @@ function evaluatePathGuards(
   const rules = spec.rules;
   if (!rules) return undefined;
 
+  let forbiddenExceptionMatched = false;
+
   if (rules.forbidden_paths) {
     const result = evaluateForbiddenPaths(
       rules.forbidden_paths,
@@ -699,7 +707,10 @@ function evaluatePathGuards(
       posture,
       originProfileId,
     );
-    if (result) return result;
+    if (result.denied) {
+      return result.denied;
+    }
+    forbiddenExceptionMatched = result.exceptionMatched;
   }
 
   if (rules.path_allowlist) {
@@ -713,6 +724,15 @@ function evaluatePathGuards(
     if (result) return result;
   }
 
+  if (forbiddenExceptionMatched) {
+    return allowResult(
+      'rules.forbidden_paths.exceptions',
+      'path matched an explicit exception',
+      originProfileId,
+      posture,
+    );
+  }
+
   return undefined;
 }
 
@@ -723,25 +743,92 @@ function evaluateToolCall(
   posture: PostureResult | undefined,
   originProfileId: string | undefined,
 ): EvaluationResult {
-  let rule: ToolAccessRule | undefined;
-  let prefix: string | undefined;
-
-  if (matchedProfile?.tool_access) {
-    rule = matchedProfile.tool_access;
-    prefix = profileRulePrefix(matchedProfile.id, 'tool_access');
-  } else if (spec.rules?.tool_access) {
-    rule = spec.rules.tool_access;
-    prefix = 'rules.tool_access';
+  const baseRule = isRuleActive(spec.rules?.tool_access) ? spec.rules?.tool_access : undefined;
+  const profileRule = matchedProfile != null && isRuleActive(matchedProfile.tool_access)
+    ? matchedProfile.tool_access
+    : undefined;
+  if (baseRule == null && profileRule == null) {
+    return allowResult(undefined, undefined, originProfileId, posture);
   }
 
-  return evaluateToolAccessRule(
-    rule,
-    prefix,
-    action.target ?? '',
-    action.args_size,
-    posture,
-    originProfileId,
-  );
+  const target = action.target ?? '';
+  const profilePrefix = matchedProfile != null
+    ? profileRulePrefix(matchedProfile.id, 'tool_access')
+    : undefined;
+  const argLimitCandidates = [
+    baseRule?.max_args_size != null
+      ? { maxArgsSize: baseRule.max_args_size, matchedRule: 'rules.tool_access.max_args_size' }
+      : undefined,
+    profileRule?.max_args_size != null && profilePrefix != null
+      ? { maxArgsSize: profileRule.max_args_size, matchedRule: `${profilePrefix}.max_args_size` }
+      : undefined,
+  ].filter((candidate): candidate is { maxArgsSize: number; matchedRule: string } => candidate != null);
+  let smallestArgLimit: { maxArgsSize: number; matchedRule: string } | undefined;
+  for (const candidate of argLimitCandidates) {
+    if (smallestArgLimit == null || candidate.maxArgsSize < smallestArgLimit.maxArgsSize) {
+      smallestArgLimit = candidate;
+    }
+  }
+
+  if (smallestArgLimit != null && (action.args_size ?? 0) > smallestArgLimit.maxArgsSize) {
+    return denyResult(
+      smallestArgLimit.matchedRule,
+      'tool arguments exceeded max_args_size',
+      originProfileId,
+      posture,
+    );
+  }
+
+  if (baseRule != null && findFirstMatch(target, baseRule.block ?? []) != null) {
+    return denyResult('rules.tool_access.block', 'tool is explicitly blocked', originProfileId, posture);
+  }
+  if (profileRule != null && profilePrefix != null && findFirstMatch(target, profileRule.block ?? []) != null) {
+    return denyResult(`${profilePrefix}.block`, 'tool is explicitly blocked', originProfileId, posture);
+  }
+
+  if (baseRule != null && findFirstMatch(target, baseRule.require_confirmation ?? []) != null) {
+    return warnResult(
+      'rules.tool_access.require_confirmation',
+      'tool requires confirmation',
+      originProfileId,
+      posture,
+    );
+  }
+  if (profileRule != null && profilePrefix != null && findFirstMatch(target, profileRule.require_confirmation ?? []) != null) {
+    return warnResult(
+      `${profilePrefix}.require_confirmation`,
+      'tool requires confirmation',
+      originProfileId,
+      posture,
+    );
+  }
+
+  const baseHasAllow = hasPatterns(baseRule?.allow);
+  const profileHasAllow = hasPatterns(profileRule?.allow);
+  const baseAllowMatch = !baseHasAllow || findFirstMatch(target, baseRule?.allow ?? []) != null;
+  const profileAllowMatch = !profileHasAllow || findFirstMatch(target, profileRule?.allow ?? []) != null;
+  if ((baseHasAllow || profileHasAllow) && baseAllowMatch && profileAllowMatch) {
+    const matchedRule = profileHasAllow && profilePrefix != null
+      ? `${profilePrefix}.allow`
+      : baseHasAllow
+        ? 'rules.tool_access.allow'
+        : undefined;
+    return allowResult(matchedRule, 'tool is explicitly allowed', originProfileId, posture);
+  }
+
+  const defaultAction = baseRule?.default === 'block' || profileRule?.default === 'block'
+    ? 'block'
+    : 'allow';
+  const defaultRule = profileRule != null && profilePrefix != null
+    ? `${profilePrefix}.default`
+    : baseRule != null
+      ? 'rules.tool_access.default'
+      : undefined;
+  if (defaultAction === 'allow') {
+    return allowResult(defaultRule, 'tool matched default allow', originProfileId, posture);
+  }
+
+  return denyResult(defaultRule, 'tool matched default block', originProfileId, posture);
 }
 
 function evaluateEgress(
@@ -751,28 +838,52 @@ function evaluateEgress(
   posture: PostureResult | undefined,
   originProfileId: string | undefined,
 ): EvaluationResult {
-  let rule: EgressRule | undefined;
-  let prefix: string | undefined;
-
-  if (matchedProfile?.egress) {
-    rule = matchedProfile.egress;
-    prefix = profileRulePrefix(matchedProfile.id, 'egress');
-  } else if (spec.rules?.egress) {
-    rule = spec.rules.egress;
-    prefix = 'rules.egress';
-  }
-
-  if (!rule) {
+  const baseRule = isRuleActive(spec.rules?.egress) ? spec.rules?.egress : undefined;
+  const profileRule = matchedProfile != null && isRuleActive(matchedProfile.egress)
+    ? matchedProfile.egress
+    : undefined;
+  if (baseRule == null && profileRule == null) {
     return allowResult(undefined, undefined, originProfileId, posture);
   }
 
-  return evaluateEgressRule(
-    rule,
-    prefix ?? 'rules.egress',
-    action.target ?? '',
-    posture,
-    originProfileId,
-  );
+  const target = action.target ?? '';
+  const profilePrefix = matchedProfile != null
+    ? profileRulePrefix(matchedProfile.id, 'egress')
+    : undefined;
+
+  if (baseRule != null && findFirstMatch(target, baseRule.block ?? []) != null) {
+    return denyResult('rules.egress.block', 'domain is explicitly blocked', originProfileId, posture);
+  }
+  if (profileRule != null && profilePrefix != null && findFirstMatch(target, profileRule.block ?? []) != null) {
+    return denyResult(`${profilePrefix}.block`, 'domain is explicitly blocked', originProfileId, posture);
+  }
+
+  const baseHasAllow = hasPatterns(baseRule?.allow);
+  const profileHasAllow = hasPatterns(profileRule?.allow);
+  const baseAllowMatch = !baseHasAllow || findFirstMatch(target, baseRule?.allow ?? []) != null;
+  const profileAllowMatch = !profileHasAllow || findFirstMatch(target, profileRule?.allow ?? []) != null;
+  if ((baseHasAllow || profileHasAllow) && baseAllowMatch && profileAllowMatch) {
+    const matchedRule = profileHasAllow && profilePrefix != null
+      ? `${profilePrefix}.allow`
+      : baseHasAllow
+        ? 'rules.egress.allow'
+        : undefined;
+    return allowResult(matchedRule, 'domain is explicitly allowed', originProfileId, posture);
+  }
+
+  const defaultAction = baseRule?.default === 'block' || profileRule?.default === 'block'
+    ? 'block'
+    : 'allow';
+  const defaultRule = profileRule != null && profilePrefix != null
+    ? `${profilePrefix}.default`
+    : baseRule != null
+      ? 'rules.egress.default'
+      : undefined;
+  if (defaultAction === 'allow') {
+    return allowResult(defaultRule, 'domain matched default allow', originProfileId, posture);
+  }
+
+  return denyResult(defaultRule, 'domain matched default block', originProfileId, posture);
 }
 
 function evaluateFileRead(

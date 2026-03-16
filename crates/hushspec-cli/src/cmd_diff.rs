@@ -38,6 +38,10 @@ struct ProbeAction {
     #[serde(rename = "type")]
     action_type: String,
     target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    args_size: Option<usize>,
 }
 
 pub fn run(args: DiffArgs) -> i32 {
@@ -69,6 +73,8 @@ pub fn run(args: DiffArgs) -> i32 {
         let action = EvaluationAction {
             action_type: probe.action_type.clone(),
             target: Some(probe.target.clone()),
+            content: probe.content.clone(),
+            args_size: probe.args_size,
             ..Default::default()
         };
 
@@ -113,9 +119,21 @@ fn generate_probes(old: &HushSpec, new: &HushSpec) -> Vec<ProbeAction> {
     extract_path_targets(old, &mut probes);
     extract_path_targets(new, &mut probes);
 
+    // Extract targets from path_allowlist
+    extract_path_allowlist_targets(old, &mut probes);
+    extract_path_allowlist_targets(new, &mut probes);
+
     // Extract targets from egress
     extract_egress_targets(old, &mut probes);
     extract_egress_targets(new, &mut probes);
+
+    // Extract content-driven probes from secret_patterns
+    extract_secret_targets(old, &mut probes);
+    extract_secret_targets(new, &mut probes);
+
+    // Extract patch probes from patch_integrity
+    extract_patch_targets(old, &mut probes);
+    extract_patch_targets(new, &mut probes);
 
     // Extract targets from tool_access
     extract_tool_targets(old, &mut probes);
@@ -125,70 +143,226 @@ fn generate_probes(old: &HushSpec, new: &HushSpec) -> Vec<ProbeAction> {
     extract_shell_targets(old, &mut probes);
     extract_shell_targets(new, &mut probes);
 
+    // Extract computer_use and channel probes
+    extract_computer_use_targets(old, &mut probes);
+    extract_computer_use_targets(new, &mut probes);
+
+    // Extract input injection probes
+    extract_input_injection_targets(old, &mut probes);
+    extract_input_injection_targets(new, &mut probes);
+
     // Add standard probes that test common scenarios
-    probes.insert(("file_read".to_string(), "/etc/passwd".to_string()));
-    probes.insert(("file_read".to_string(), "/etc/shadow".to_string()));
-    probes.insert(("egress".to_string(), "example.com".to_string()));
-    probes.insert(("tool_call".to_string(), "unknown_tool".to_string()));
-    probes.insert(("shell_command".to_string(), "rm -rf /".to_string()));
-    probes.insert(("shell_command".to_string(), "ls".to_string()));
+    insert_probe(&mut probes, "file_read", "/etc/passwd", None, None);
+    insert_probe(&mut probes, "file_read", "/etc/shadow", None, None);
+    insert_probe(
+        &mut probes,
+        "file_write",
+        "/tmp/output.txt",
+        Some("hello world".to_string()),
+        None,
+    );
+    insert_probe(
+        &mut probes,
+        "patch_apply",
+        "patch.diff",
+        Some(build_patch(2, 1)),
+        None,
+    );
+    insert_probe(&mut probes, "egress", "example.com", None, None);
+    insert_probe(&mut probes, "tool_call", "unknown_tool", None, None);
+    insert_probe(&mut probes, "shell_command", "rm -rf /", None, None);
+    insert_probe(&mut probes, "shell_command", "ls", None, None);
+    insert_probe(&mut probes, "computer_use", "remote.clipboard", None, None);
+    insert_probe(&mut probes, "input_inject", "keyboard", None, None);
 
     probes
         .into_iter()
-        .map(|(action_type, target)| ProbeAction {
+        .map(|(action_type, target, content, args_size)| ProbeAction {
             action_type,
             target,
+            content,
+            args_size,
         })
         .collect()
 }
 
-fn extract_path_targets(spec: &HushSpec, probes: &mut BTreeSet<(String, String)>) {
+fn insert_probe(
+    probes: &mut BTreeSet<(String, String, Option<String>, Option<usize>)>,
+    action_type: &str,
+    target: &str,
+    content: Option<String>,
+    args_size: Option<usize>,
+) {
+    probes.insert((
+        action_type.to_string(),
+        target.to_string(),
+        content,
+        args_size,
+    ));
+}
+
+fn extract_path_targets(
+    spec: &HushSpec,
+    probes: &mut BTreeSet<(String, String, Option<String>, Option<usize>)>,
+) {
     let Some(rules) = &spec.rules else { return };
 
     if let Some(forbidden_paths) = &rules.forbidden_paths {
         for pattern in &forbidden_paths.patterns {
             let concrete = concretize_glob(pattern);
-            probes.insert(("file_read".to_string(), concrete));
+            insert_probe(probes, "file_read", &concrete, None, None);
         }
         for pattern in &forbidden_paths.exceptions {
             let concrete = concretize_glob(pattern);
-            probes.insert(("file_read".to_string(), concrete));
+            insert_probe(probes, "file_read", &concrete, None, None);
         }
     }
 }
 
-fn extract_egress_targets(spec: &HushSpec, probes: &mut BTreeSet<(String, String)>) {
+fn extract_path_allowlist_targets(
+    spec: &HushSpec,
+    probes: &mut BTreeSet<(String, String, Option<String>, Option<usize>)>,
+) {
+    let Some(rules) = &spec.rules else { return };
+
+    if let Some(path_allowlist) = &rules.path_allowlist {
+        for pattern in &path_allowlist.read {
+            let concrete = concretize_glob(pattern);
+            insert_probe(probes, "file_read", &concrete, None, None);
+        }
+        for pattern in &path_allowlist.write {
+            let concrete = concretize_glob(pattern);
+            insert_probe(
+                probes,
+                "file_write",
+                &concrete,
+                Some("hello world".to_string()),
+                None,
+            );
+        }
+        for pattern in &path_allowlist.patch {
+            let concrete = concretize_glob(pattern);
+            insert_probe(
+                probes,
+                "patch_apply",
+                &concrete,
+                Some(build_patch(1, 0)),
+                None,
+            );
+        }
+    }
+}
+
+fn extract_egress_targets(
+    spec: &HushSpec,
+    probes: &mut BTreeSet<(String, String, Option<String>, Option<usize>)>,
+) {
     let Some(rules) = &spec.rules else { return };
 
     if let Some(egress) = &rules.egress {
         for entry in &egress.allow {
             let concrete = concretize_domain(entry);
-            probes.insert(("egress".to_string(), concrete));
+            insert_probe(probes, "egress", &concrete, None, None);
         }
         for entry in &egress.block {
             let concrete = concretize_domain(entry);
-            probes.insert(("egress".to_string(), concrete));
+            insert_probe(probes, "egress", &concrete, None, None);
         }
     }
 }
 
-fn extract_tool_targets(spec: &HushSpec, probes: &mut BTreeSet<(String, String)>) {
+fn extract_secret_targets(
+    spec: &HushSpec,
+    probes: &mut BTreeSet<(String, String, Option<String>, Option<usize>)>,
+) {
+    let Some(rules) = &spec.rules else { return };
+
+    if let Some(secret_patterns) = &rules.secret_patterns {
+        for pattern in &secret_patterns.patterns {
+            let literal = extract_regex_literal(&pattern.pattern);
+            let content = if literal.is_empty() {
+                pattern.name.clone()
+            } else {
+                literal
+            };
+            insert_probe(probes, "file_write", "/tmp/secret.txt", Some(content), None);
+        }
+        for pattern in &secret_patterns.skip_paths {
+            let concrete = concretize_glob(pattern);
+            insert_probe(
+                probes,
+                "file_write",
+                &concrete,
+                Some("api_key = abcdefghijklmnopqrstuvwxyz123456".to_string()),
+                None,
+            );
+        }
+    }
+}
+
+fn extract_patch_targets(
+    spec: &HushSpec,
+    probes: &mut BTreeSet<(String, String, Option<String>, Option<usize>)>,
+) {
+    let Some(rules) = &spec.rules else { return };
+
+    if let Some(patch_integrity) = &rules.patch_integrity {
+        for pattern in &patch_integrity.forbidden_patterns {
+            let literal = extract_regex_literal(pattern);
+            let content = if literal.is_empty() {
+                build_patch(1, 0)
+            } else {
+                format!("@@\n+{literal}")
+            };
+            insert_probe(probes, "patch_apply", "patch.diff", Some(content), None);
+        }
+
+        insert_probe(
+            probes,
+            "patch_apply",
+            "patch.diff",
+            Some(build_patch(
+                patch_integrity.max_additions.saturating_add(1),
+                0,
+            )),
+            None,
+        );
+        insert_probe(
+            probes,
+            "patch_apply",
+            "patch.diff",
+            Some(build_patch(
+                0,
+                patch_integrity.max_deletions.saturating_add(1),
+            )),
+            None,
+        );
+    }
+}
+
+fn extract_tool_targets(
+    spec: &HushSpec,
+    probes: &mut BTreeSet<(String, String, Option<String>, Option<usize>)>,
+) {
     let Some(rules) = &spec.rules else { return };
 
     if let Some(tool_access) = &rules.tool_access {
         for entry in &tool_access.allow {
-            probes.insert(("tool_call".to_string(), entry.clone()));
+            insert_probe(probes, "tool_call", entry, None, None);
         }
         for entry in &tool_access.block {
-            probes.insert(("tool_call".to_string(), entry.clone()));
+            insert_probe(probes, "tool_call", entry, None, None);
         }
         for entry in &tool_access.require_confirmation {
-            probes.insert(("tool_call".to_string(), entry.clone()));
+            insert_probe(probes, "tool_call", entry, None, None);
         }
     }
 }
 
-fn extract_shell_targets(spec: &HushSpec, probes: &mut BTreeSet<(String, String)>) {
+fn extract_shell_targets(
+    spec: &HushSpec,
+    probes: &mut BTreeSet<(String, String, Option<String>, Option<usize>)>,
+) {
     let Some(rules) = &spec.rules else { return };
 
     if let Some(shell_commands) = &rules.shell_commands {
@@ -196,8 +370,48 @@ fn extract_shell_targets(spec: &HushSpec, probes: &mut BTreeSet<(String, String)
             // Extract literal fragments from regex to build a matching command
             let literal = extract_regex_literal(pattern);
             if !literal.is_empty() {
-                probes.insert(("shell_command".to_string(), literal));
+                insert_probe(probes, "shell_command", &literal, None, None);
             }
+        }
+    }
+}
+
+fn extract_computer_use_targets(
+    spec: &HushSpec,
+    probes: &mut BTreeSet<(String, String, Option<String>, Option<usize>)>,
+) {
+    let Some(rules) = &spec.rules else { return };
+
+    if let Some(computer_use) = &rules.computer_use {
+        for action in &computer_use.allowed_actions {
+            insert_probe(probes, "computer_use", action, None, None);
+        }
+    }
+
+    if rules.remote_desktop_channels.is_some() {
+        for action in [
+            "remote.clipboard",
+            "remote.file_transfer",
+            "remote.audio",
+            "remote.drive_mapping",
+        ] {
+            insert_probe(probes, "computer_use", action, None, None);
+        }
+    }
+}
+
+fn extract_input_injection_targets(
+    spec: &HushSpec,
+    probes: &mut BTreeSet<(String, String, Option<String>, Option<usize>)>,
+) {
+    let Some(rules) = &spec.rules else { return };
+
+    if let Some(input_injection) = &rules.input_injection {
+        for input_type in &input_injection.allowed_types {
+            insert_probe(probes, "input_inject", input_type, None, None);
+        }
+        for input_type in ["keyboard", "mouse", "touch"] {
+            insert_probe(probes, "input_inject", input_type, None, None);
         }
     }
 }
@@ -261,6 +475,17 @@ fn extract_regex_literal(pattern: &str) -> String {
     }
 
     result
+}
+
+fn build_patch(additions: usize, deletions: usize) -> String {
+    let mut patch = vec!["@@".to_string()];
+    for idx in 0..additions {
+        patch.push(format!("+added_{idx}"));
+    }
+    for idx in 0..deletions {
+        patch.push(format!("-removed_{idx}"));
+    }
+    patch.join("\n")
 }
 
 fn classify_change(old: &EvaluationResult, new: &EvaluationResult) -> String {
