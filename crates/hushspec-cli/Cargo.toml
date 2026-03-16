@@ -10,7 +10,7 @@ name = "h2h"
 path = "src/main.rs"
 
 [dependencies]
-hushspec = { path = "../hushspec", features = ["signing"] }
+hushspec = { version = "0.1.0", path = "../hushspec", features = ["signing"] }
 clap = { version = "4", features = ["derive"] }
 colored = "2"
 serde = { version = "1", features = ["derive"] }
