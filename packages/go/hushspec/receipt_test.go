@@ -24,6 +24,7 @@ func specWithToolAccess() *HushSpec {
 		Name:            "tool-policy",
 		Rules: &Rules{
 			ToolAccess: &ToolAccessRule{
+				Enabled: true,
 				Allow:   []string{"read_file", "write_file"},
 				Block:   []string{"dangerous_tool"},
 				Default: DefaultActionBlock,

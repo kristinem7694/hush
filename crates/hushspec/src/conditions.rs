@@ -159,13 +159,6 @@ fn check_time_window(tw: &TimeWindowCondition, context: &RuntimeContext) -> bool
         return false;
     };
 
-    if !tw.days.is_empty() {
-        let day_abbrev = day_abbreviation(day_of_week);
-        if !tw.days.iter().any(|d| d.eq_ignore_ascii_case(day_abbrev)) {
-            return false;
-        }
-    }
-
     let Some((start_h, start_m)) = parse_hhmm(&tw.start) else {
         return false;
     };
@@ -176,6 +169,19 @@ fn check_time_window(tw: &TimeWindowCondition, context: &RuntimeContext) -> bool
     let current_minutes = hour as u32 * 60 + minute as u32;
     let start_minutes = start_h as u32 * 60 + start_m as u32;
     let end_minutes = end_h as u32 * 60 + end_m as u32;
+    let wraps_midnight = start_minutes > end_minutes;
+
+    if !tw.days.is_empty() {
+        let effective_day = if wraps_midnight && current_minutes < end_minutes {
+            (day_of_week + 6) % 7
+        } else {
+            day_of_week
+        };
+        let day_abbrev = day_abbreviation(effective_day);
+        if !tw.days.iter().any(|d| d.eq_ignore_ascii_case(day_abbrev)) {
+            return false;
+        }
+    }
 
     if start_minutes == end_minutes {
         return true;
@@ -217,7 +223,8 @@ fn day_abbreviation(day: u32) -> &'static str {
 
 /// Returns `(hour, minute, day_of_week)` where day_of_week is 0=Mon..6=Sun.
 fn resolve_current_time(context: &RuntimeContext, timezone: Option<&str>) -> Option<(u8, u8, u32)> {
-    use chrono::{Datelike, NaiveDateTime, Timelike, Utc};
+    use chrono::{Datelike, FixedOffset, NaiveDateTime, Timelike, Utc};
+    use std::str::FromStr;
 
     let utc_now = if let Some(ref time_str) = context.current_time {
         if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(time_str) {
@@ -232,9 +239,13 @@ fn resolve_current_time(context: &RuntimeContext, timezone: Option<&str>) -> Opt
     };
 
     let tz = timezone.unwrap_or("UTC");
-    let offset_minutes = parse_timezone_offset(tz);
-
-    let adjusted = utc_now + chrono::Duration::minutes(offset_minutes as i64);
+    let adjusted = if let Ok(tz) = chrono_tz::Tz::from_str(tz) {
+        utc_now.with_timezone(&tz).fixed_offset()
+    } else {
+        let offset_minutes = parse_timezone_offset(tz);
+        let offset = FixedOffset::east_opt(offset_minutes.saturating_mul(60))?;
+        utc_now.with_timezone(&offset)
+    };
     let hour = adjusted.hour() as u8;
     let minute = adjusted.minute() as u8;
     let day_of_week = adjusted.weekday().num_days_from_monday();
@@ -247,25 +258,22 @@ fn resolve_current_time(context: &RuntimeContext, timezone: Option<&str>) -> Opt
 /// Supports:
 /// - `"UTC"` -> 0
 /// - `"+05:00"` / `"-05:30"` -> +300 / -330
-/// - Common IANA names mapped to approximate fixed offsets.
+/// - Fixed aliases like `"EST"` or `"JST"`
 ///
-/// For full IANA timezone support with DST, use the `chrono-tz` crate.
+/// IANA timezone names are resolved in `resolve_current_time` via `chrono-tz`.
 fn parse_timezone_offset(tz: &str) -> i32 {
     match tz {
         "UTC" | "utc" | "Etc/UTC" | "Etc/GMT" | "GMT" => 0,
-        // US timezones (standard time -- DST not handled)
-        "America/New_York" | "US/Eastern" | "EST" => -5 * 60,
-        "America/Chicago" | "US/Central" | "CST" => -6 * 60,
-        "America/Denver" | "US/Mountain" | "MST" => -7 * 60,
-        "America/Los_Angeles" | "US/Pacific" | "PST" => -8 * 60,
-        // Europe
-        "Europe/London" | "GB" => 0,
-        "Europe/Paris" | "Europe/Berlin" | "CET" => 60,
-        "Europe/Helsinki" | "EET" => 120,
-        // Asia
-        "Asia/Tokyo" | "Japan" | "JST" => 9 * 60,
-        "Asia/Shanghai" | "Asia/Hong_Kong" | "PRC" => 8 * 60,
-        "Asia/Kolkata" | "Asia/Calcutta" | "IST" => 5 * 60 + 30,
+        "US/Eastern" | "EST" => -5 * 60,
+        "US/Central" | "CST" => -6 * 60,
+        "US/Mountain" | "MST" => -7 * 60,
+        "US/Pacific" | "PST" => -8 * 60,
+        "GB" => 0,
+        "CET" => 60,
+        "EET" => 120,
+        "Japan" | "JST" => 9 * 60,
+        "PRC" => 8 * 60,
+        "IST" => 5 * 60 + 30,
         // Numeric offset
         _ => {
             if let Some(rest) = tz.strip_prefix('+') {
@@ -667,6 +675,38 @@ mod tests {
                 start: "09:30".to_string(),
                 end: "10:00".to_string(),
                 timezone: Some("+05:30".to_string()),
+                days: vec![],
+            }),
+            ..Default::default()
+        };
+        assert!(evaluate_condition(&cond, &ctx));
+    }
+
+    #[test]
+    fn time_window_wraps_midnight_with_day_filter() {
+        // Saturday 2026-01-17 03:00 UTC should still count as Friday night.
+        let ctx = ctx_with_time("2026-01-17T03:00:00Z");
+        let cond = Condition {
+            time_window: Some(TimeWindowCondition {
+                start: "22:00".to_string(),
+                end: "06:00".to_string(),
+                timezone: Some("UTC".to_string()),
+                days: vec!["fri".to_string()],
+            }),
+            ..Default::default()
+        };
+        assert!(evaluate_condition(&cond, &ctx));
+    }
+
+    #[test]
+    fn time_window_uses_dst_for_iana_timezones() {
+        // 13:30 UTC is 09:30 in America/New_York on July 1, 2026.
+        let ctx = ctx_with_time("2026-07-01T13:30:00Z");
+        let cond = Condition {
+            time_window: Some(TimeWindowCondition {
+                start: "09:00".to_string(),
+                end: "10:00".to_string(),
+                timezone: Some("America/New_York".to_string()),
                 days: vec![],
             }),
             ..Default::default()

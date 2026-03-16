@@ -237,11 +237,9 @@ func evaluateToolAccessRule(
 	if rule == nil {
 		return allowResult("", "", originProfileID, posture)
 	}
-
-	// NOTE: ToolAccessRule defaults to enabled=true in the spec. The Go
-	// generated model uses a plain bool so we cannot distinguish "absent"
-	// from "false". We therefore do not gate on Enabled here; the rule
-	// struct being non-nil indicates the rule block was specified.
+	if !rule.Enabled {
+		return allowResult("", "", originProfileID, posture)
+	}
 
 	if rule.MaxArgsSize != nil {
 		actual := 0
@@ -348,6 +346,10 @@ func evaluateSecretPatterns(
 	posture *PostureResult,
 	originProfileID string,
 ) EvaluationResult {
+	if !rule.Enabled {
+		return allowResult("", "", originProfileID, posture)
+	}
+
 	if findFirstMatch(target, rule.SkipPaths) >= 0 {
 		return allowResult(
 			"rules.secret_patterns.skip_paths",
@@ -379,6 +381,10 @@ func evaluatePatchIntegrity(
 	posture *PostureResult,
 	originProfileID string,
 ) EvaluationResult {
+	if !rule.Enabled {
+		return allowResult("", "", originProfileID, posture)
+	}
+
 	for index, pattern := range rule.ForbiddenPatterns {
 		re, err := regexp.Compile(pattern)
 		if err != nil {
@@ -394,22 +400,14 @@ func evaluatePatchIntegrity(
 	}
 
 	stats := computePatchStats(content)
-	maxAdd := rule.MaxAdditions
-	if maxAdd == 0 {
-		maxAdd = 1000
-	}
-	maxDel := rule.MaxDeletions
-	if maxDel == 0 {
-		maxDel = 500
-	}
-	if stats.additions > maxAdd {
+	if stats.additions > rule.MaxAdditions {
 		return denyResult(
 			"rules.patch_integrity.max_additions",
 			"patch additions exceeded max_additions",
 			originProfileID, posture,
 		)
 	}
-	if stats.deletions > maxDel {
+	if stats.deletions > rule.MaxDeletions {
 		return denyResult(
 			"rules.patch_integrity.max_deletions",
 			"patch deletions exceeded max_deletions",
@@ -436,6 +434,10 @@ func evaluateShellRule(
 	posture *PostureResult,
 	originProfileID string,
 ) EvaluationResult {
+	if !rule.Enabled {
+		return allowResult("", "", originProfileID, posture)
+	}
+
 	for index, pattern := range rule.ForbiddenPatterns {
 		re, err := regexp.Compile(pattern)
 		if err != nil {
@@ -531,6 +533,10 @@ func evaluateForbiddenPaths(
 	posture *PostureResult,
 	originProfileID string,
 ) *EvaluationResult {
+	if !rule.Enabled {
+		return nil
+	}
+
 	if findFirstMatch(target, rule.Exceptions) >= 0 {
 		result := allowResult(
 			"rules.forbidden_paths.exceptions",

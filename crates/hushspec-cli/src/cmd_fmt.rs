@@ -526,7 +526,12 @@ fn yaml_scalar(s: &str) -> String {
 
     if needs_quoting {
         // Use double quotes, escaping internal double quotes and backslashes
-        let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+        let escaped = s
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t");
         format!("\"{escaped}\"")
     } else {
         s.to_string()
@@ -581,4 +586,30 @@ fn compute_diff(original: &str, formatted: &str, path: &std::path::Path) -> Stri
     }
 
     diff_output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_spec;
+    use hushspec::HushSpec;
+
+    #[test]
+    fn format_spec_preserves_newlines_and_tabs_in_scalars() {
+        let spec = HushSpec {
+            hushspec: "0.1.0".to_string(),
+            name: Some("line1\nline2\tend".to_string()),
+            description: Some("tab\tvalue".to_string()),
+            extends: None,
+            merge_strategy: None,
+            rules: None,
+            extensions: None,
+            metadata: None,
+        };
+
+        let formatted = format_spec(&spec);
+        let reparsed = HushSpec::parse(&formatted).expect("formatted YAML should parse");
+
+        assert_eq!(reparsed.name.as_deref(), Some("line1\nline2\tend"));
+        assert_eq!(reparsed.description.as_deref(), Some("tab\tvalue"));
+    }
 }

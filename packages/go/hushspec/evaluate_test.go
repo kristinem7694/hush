@@ -209,6 +209,71 @@ rules:
 	}
 }
 
+func TestEvaluateToolAccessDisabledAllowsAction(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+rules:
+  tool_access:
+    enabled: false
+    block: ["deploy"]
+    default: block
+`)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	result := Evaluate(spec, &EvaluationAction{Type: "tool_call", Target: "deploy"})
+	if result.Decision != DecisionAllow {
+		t.Fatalf("expected disabled tool_access rule to allow, got %q (%s)", result.Decision, result.Reason)
+	}
+}
+
+func TestEvaluateForbiddenPathsDisabledAllowsAction(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+rules:
+  forbidden_paths:
+    enabled: false
+    patterns: ["**/.ssh/**"]
+`)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	result := Evaluate(spec, &EvaluationAction{Type: "file_read", Target: "/tmp/.ssh/id_rsa"})
+	if result.Decision != DecisionAllow {
+		t.Fatalf("expected disabled forbidden_paths rule to allow, got %q (%s)", result.Decision, result.Reason)
+	}
+}
+
+func TestEvaluatePatchIntegrityHonorsExplicitZeroLimits(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+rules:
+  patch_integrity:
+    enabled: true
+    max_additions: 0
+    max_deletions: 0
+    forbidden_patterns: []
+`)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	patch := "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1,2 @@\n line1\n+line2\n"
+	result := Evaluate(spec, &EvaluationAction{
+		Type:    "patch_apply",
+		Target:  "file.txt",
+		Content: patch,
+	})
+	if result.Decision != DecisionDeny {
+		t.Fatalf("expected explicit zero patch limits to deny additions, got %q (%s)", result.Decision, result.Reason)
+	}
+	if result.MatchedRule != "rules.patch_integrity.max_additions" {
+		t.Fatalf("expected max_additions denial, got %q", result.MatchedRule)
+	}
+}
+
 func buildEvaluationAction(t *testing.T, actionMap map[string]any) *EvaluationAction {
 	t.Helper()
 	jsonBytes, err := json.Marshal(actionMap)
