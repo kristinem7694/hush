@@ -206,3 +206,44 @@ rules:
     assert_eq!(result.decision, Decision::Deny);
     assert_eq!(result.matched_rule.as_deref(), Some("rules.path_allowlist"));
 }
+
+#[test]
+fn unknown_posture_state_fails_closed() {
+    let spec = HushSpec::parse(
+        r#"
+hushspec: "0.1.0"
+name: posture-unknown-state
+extensions:
+  posture:
+    initial: standard
+    states:
+      standard:
+        capabilities: [file_access]
+    transitions: []
+"#,
+    )
+    .expect("valid spec");
+
+    let result = evaluate(
+        &spec,
+        &EvaluationAction {
+            action_type: "file_read".into(),
+            target: Some("/workspace/readme.md".into()),
+            posture: Some(hushspec::PostureContext {
+                current: Some("typo".into()),
+                signal: None,
+            }),
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(result.decision, Decision::Deny);
+    assert_eq!(
+        result.matched_rule.as_deref(),
+        Some("extensions.posture.states.typo")
+    );
+    assert_eq!(
+        result.reason.as_deref(),
+        Some("unknown posture state 'typo'")
+    );
+}

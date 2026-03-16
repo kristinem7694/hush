@@ -1080,9 +1080,21 @@ fn posture_capability_guard(
         .extensions
         .as_ref()
         .and_then(|extensions| extensions.posture.as_ref())?;
-    let current_state = posture_extension.states.get(&posture_result.current)?;
-
     let capability = required_capability(action.action_type.as_str())?;
+    let Some(current_state) = posture_extension.states.get(&posture_result.current) else {
+        return Some(deny_result(
+            Some(format!(
+                "extensions.posture.states.{}",
+                posture_result.current
+            )),
+            Some(format!(
+                "unknown posture state '{}'",
+                posture_result.current
+            )),
+            origin_profile_id.clone(),
+            Some(posture_result.clone()),
+        ));
+    };
 
     if current_state
         .capabilities
