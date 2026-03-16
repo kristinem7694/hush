@@ -21,11 +21,11 @@
 
 ---
 
-HushSpec defines a declarative format for expressing security rules at the tool boundary of AI agent runtimes. It specifies **what** constraints an agent operates under -- forbidden paths, egress domains, tool access, secret detection, and more -- without prescribing **how** those rules are enforced. Any compliant engine can consume a HushSpec document and enforce it, making security policies portable across runtimes, frameworks, and languages.
+HushSpec is an open policy format for AI agent security rules. It defines **what** an agent may do at runtime, including filesystem access, network egress, tool usage, secret detection, and more, without prescribing **how** those controls must be enforced. That separation makes policies portable across runtimes, frameworks, and languages.
 
-**Status:** v0.1.0 (draft). The spec is under active development; breaking changes may occur before v1.0.
+**Status:** v0.1.0 (draft). The spec is still evolving, and breaking changes may occur before v1.0.
 
-The Rust crate, TypeScript package, Python package, and Go module are not published to package registries yet. Consume them from this repository for now.
+The Rust crate, TypeScript package, Python package, and Go module are not published to package registries yet. Use them from this repository for now.
 
 ## Quick Example
 
@@ -67,7 +67,7 @@ rules:
 
 ## SDK Conformance
 
-All four SDKs implement the full HushSpec pipeline: parse, validate, merge, resolve, evaluate.
+All four SDKs implement the full HushSpec pipeline, from parse and validate through resolution and evaluation.
 
 | Capability | Rust | TypeScript | Python | Go |
 |---|:---:|:---:|:---:|:---:|
@@ -81,6 +81,8 @@ All four SDKs implement the full HushSpec pipeline: parse, validate, merge, reso
 | Receipt Sinks | Yes | Yes | Yes | Yes |
 
 ## Getting Started
+
+The examples below use the current repo-local install path for each SDK.
 
 ### Rust
 
@@ -156,7 +158,7 @@ fmt.Println(result.IsValid())
 
 ## Evaluation
 
-All four SDKs export an `evaluate()` function that takes a parsed spec and an action, returning a decision (`allow`, `warn`, or `deny`) with matched rule details.
+Each SDK exposes an `evaluate()` function that takes a parsed spec and an action, then returns a decision (`allow`, `warn`, or `deny`) plus matched rule details.
 
 ```typescript
 import { parseOrThrow, evaluate } from '@hushspec/core';
@@ -177,7 +179,7 @@ assert result.decision in ("allow", "warn", "deny")
 
 ## HushGuard Middleware
 
-`HushGuard` wraps policy loading and evaluation into a single enforce-or-throw interface for use in application code.
+`HushGuard` wraps policy loading and evaluation behind a simple `evaluate`, `check`, and `enforce` interface for application code.
 
 ```typescript
 import { HushGuard } from '@hushspec/core';
@@ -195,7 +197,7 @@ guard.enforce({"type": "tool_call", "target": "bash"})  # raises HushSpecDenied 
 
 ## CLI Tool
 
-The `hushspec` CLI provides 10 subcommands for policy management.
+The `hushspec` CLI covers the common policy workflow: validate, test, lint, diff, format, initialize, sign, verify, and trigger panic mode.
 
 ```bash
 # Validate a policy against the HushSpec schema
@@ -239,7 +241,7 @@ cargo install --path crates/hushspec-cli
 <details>
 <summary>Decision Receipts (Audit Trail)</summary>
 
-`evaluate_audited()` generates structured decision receipts with rule traces, policy summaries, and optional content redaction. Receipts conform to the `hushspec-receipt.v0.schema.json` schema and are designed for SOC2, HIPAA, PCI-DSS, and FedRAMP audit requirements.
+`evaluate_audited()` generates structured decision receipts with rule traces, policy summaries, and optional content redaction. Receipts conform to `hushspec-receipt.v0.schema.json` and are designed to support audit-heavy environments such as SOC 2, HIPAA, PCI-DSS, and FedRAMP.
 
 ```typescript
 import { parseOrThrow, evaluateAudited } from '@hushspec/core';
@@ -260,7 +262,7 @@ Receipt sinks (`FileReceiptSink`, `ConsoleReceiptSink`, `FilteredSink`, `MultiSi
 <details>
 <summary>Detection Pipeline</summary>
 
-The detection pipeline integrates pluggable detectors (prompt injection, jailbreak, exfiltration) into the evaluation flow. Regex-based reference detectors ship with all SDKs; custom detectors can be registered via `DetectorRegistry`.
+The detection pipeline plugs prompt injection, jailbreak, and exfiltration checks into the evaluation flow. Regex-based reference detectors ship with all SDKs, and custom detectors can be registered through `DetectorRegistry`.
 
 ```typescript
 import { parseOrThrow, evaluateWithDetection, DetectorRegistry } from '@hushspec/core';
@@ -278,7 +280,7 @@ const result = evaluateWithDetection(spec, action, registry, {
 <details>
 <summary>Framework Adapters</summary>
 
-Pre-built adapters map framework-specific tool calls to HushSpec evaluation actions.
+Prebuilt adapters translate framework-specific tool calls into HushSpec evaluation actions.
 
 | Framework | Adapter | SDK |
 |---|---|---|
@@ -304,10 +306,10 @@ The `EvaluationObserver` interface and `ObservableEvaluator` wrapper emit struct
 ```typescript
 import { ObservableEvaluator, JsonLineObserver, MetricsCollector } from '@hushspec/core';
 
-const evaluator = new ObservableEvaluator(spec);
+const evaluator = new ObservableEvaluator();
 evaluator.addObserver(new JsonLineObserver(process.stderr));
 evaluator.addObserver(new MetricsCollector());
-const result = evaluator.evaluate(action);
+const result = evaluator.evaluate(spec, action);
 ```
 
 </details>
@@ -315,7 +317,7 @@ const result = evaluator.evaluate(action);
 <details>
 <summary>Policy Signing</summary>
 
-Policies can be signed with Ed25519 keys and verified at load time. The CLI provides `sign`, `verify`, and `keygen` commands. Signature format conforms to `hushspec-signature.v0.schema.json`.
+Policies can be signed with Ed25519 keys and verified at load time. The CLI provides `sign`, `verify`, and `keygen` commands. The signature format conforms to `hushspec-signature.v0.schema.json`.
 
 ```bash
 # Generate a keypair
@@ -333,7 +335,7 @@ hushspec verify policy.yaml --key mykey.pub
 <details>
 <summary>Emergency Override (Panic Mode)</summary>
 
-Panic mode is a deny-all kill switch that can be activated instantly without redeploying policies. Activation is via file-based sentinel, CLI command, or API call. All evaluations return `deny` while panic mode is active.
+Panic mode is a deny-all kill switch that can be activated immediately without redeploying policies. You can trigger it with a sentinel file, the CLI, or an API call. While panic mode is active, every evaluation returns `deny`.
 
 ```bash
 # Activate panic mode
@@ -356,14 +358,14 @@ deactivatePanic();
 <details>
 <summary>Policy Loading and Hot Reload</summary>
 
-Policies can be loaded from local files, HTTPS URLs (with ETag caching and SSRF prevention), or built-in rulesets. `PolicyWatcher` (file system events) and `PolicyPoller` (interval-based) support hot reload without process restart.
+Policies can be loaded from local files, HTTPS URLs (with ETag caching and SSRF protection), or built-in rulesets. `PolicyWatcher` and `PolicyPoller` support hot reload without restarting the process.
 
 ```typescript
 import { PolicyWatcher, HushGuard } from '@hushspec/core';
 
 const guard = HushGuard.fromFile('./policy.yaml');
 const watcher = new PolicyWatcher('./policy.yaml', {
-  onReload: (newSpec) => guard.updateSpec(newSpec),
+  onChange: (newSpec) => guard.swapPolicy(newSpec),
 });
 watcher.start();
 ```
@@ -387,7 +389,7 @@ watcher.start();
 
 ## Extensions
 
-HushSpec supports optional extension modules for advanced features:
+HushSpec supports optional extension modules for more advanced policy behavior:
 
 | Extension | Purpose |
 |-----------|---------|
@@ -411,7 +413,7 @@ extensions:
 
 ## Built-in Rulesets
 
-Ready-to-use policies in [`rulesets/`](./rulesets/):
+Ready-to-use policies live in [`rulesets/`](./rulesets/):
 
 | Ruleset | Description |
 |---------|-------------|
@@ -439,27 +441,27 @@ hush policy migrate policy.yaml --to hushspec
 
 ## Repo Structure
 
-```
-spec/           Normative specification (core + 3 extensions)
-schemas/        JSON Schema definitions (7 schemas, draft 2020-12)
-crates/         Rust crates
-  hushspec/       Core library: parse, validate, merge, resolve, evaluate, detect, sign
-  hushspec-cli/   CLI tool with 10 subcommands
+```text
+spec/              Normative specification, including core and extension docs
+schemas/           JSON Schema definitions
+crates/            Rust crates
+  hushspec/          Core library: parse, validate, merge, resolve, evaluate, detect, sign
+  hushspec-cli/      CLI tool
   hushspec-testkit/  Conformance test runner
-packages/       Language SDKs (TypeScript, Python, Go)
-rulesets/       7 built-in security rulesets
-fixtures/       50 conformance test fixtures
-docs/           mdBook documentation site
-generated/      SDK contract definitions (auto-generated)
-scripts/        Code generation and CI tooling
+packages/          Language SDKs for TypeScript, Python, and Go
+rulesets/          Built-in security rulesets
+fixtures/          Conformance and evaluation fixtures
+docs/              mdBook documentation site
+generated/         Generated shared SDK contract artifacts
+scripts/           Code generation and CI tooling
 ```
 
 ## Design Principles
 
-- **Fail-closed** -- Unknown fields are rejected; invalid documents produce errors, not silent misconfiguration
-- **Stateless** -- Core rules are pure declarations with no runtime state
-- **Engine-neutral** -- No detection algorithms, receipt formats, or plugin systems in the spec
-- **Extensible** -- Optional modules for posture, origins, and detection without bloating the core
+- **Fail-closed**: Unknown fields are rejected, and invalid documents fail with explicit errors.
+- **Stateless**: Core rules are pure declarations with no runtime state.
+- **Engine-neutral**: The spec does not require a specific enforcement engine, detector, or plugin model.
+- **Extensible**: Posture, origins, and detection stay optional instead of bloating the core format.
 
 ## Specification
 

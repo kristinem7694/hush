@@ -1069,7 +1069,7 @@ fn find_first_match(target: &str, patterns: &[String]) -> Option<usize> {
         .find_map(|(index, pattern)| glob_matches(pattern, target).then_some(index))
 }
 
-fn glob_matches(pattern: &str, target: &str) -> bool {
+pub fn glob_matches(pattern: &str, target: &str) -> bool {
     let mut regex = String::from("^");
     let mut chars = pattern.chars().peekable();
     while let Some(ch) = chars.next() {

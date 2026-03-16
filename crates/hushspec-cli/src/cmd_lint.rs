@@ -1,5 +1,6 @@
 use clap::ValueEnum;
 use colored::Colorize;
+use hushspec::evaluate::glob_matches;
 use hushspec::{DefaultAction, HushSpec};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -723,34 +724,6 @@ fn check_unreachable_allow(rules: &hushspec::Rules, file: &str, findings: &mut V
             }
         }
     }
-}
-
-/// Simplified glob matching (mirrors the evaluator's glob_matches)
-fn glob_matches(pattern: &str, target: &str) -> bool {
-    let mut regex = String::from("^");
-    let mut chars = pattern.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '*' => {
-                if matches!(chars.peek(), Some('*')) {
-                    chars.next();
-                    regex.push_str(".*");
-                } else {
-                    regex.push_str("[^/]*");
-                }
-            }
-            '?' => regex.push('.'),
-            '.' | '+' | '(' | ')' | '{' | '}' | '[' | ']' | '^' | '$' | '|' | '\\' => {
-                regex.push('\\');
-                regex.push(ch);
-            }
-            _ => regex.push(ch),
-        }
-    }
-    regex.push('$');
-    regex::Regex::new(&regex)
-        .map(|compiled| compiled.is_match(target))
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

@@ -137,6 +137,7 @@ fn evaluate_condition_depth(condition: &Condition, context: &RuntimeContext, dep
     }
 
     if let Some(any) = &condition.any_of
+        && !any.is_empty()
         && !any
             .iter()
             .any(|c| evaluate_condition_depth(c, context, depth + 1))
@@ -778,6 +779,16 @@ mod tests {
         assert!(evaluate_condition(&cond, &ctx_with_env("production")));
         assert!(evaluate_condition(&cond, &ctx_with_env("staging")));
         assert!(!evaluate_condition(&cond, &ctx_with_env("development")));
+    }
+
+    #[test]
+    fn empty_any_of_is_treated_as_unset() {
+        let cond = Condition {
+            any_of: Some(vec![]),
+            ..Default::default()
+        };
+
+        assert!(evaluate_condition(&cond, &ctx_with_env("production")));
     }
 
     #[test]
