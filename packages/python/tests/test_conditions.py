@@ -226,6 +226,11 @@ class TestCompoundConditions:
         assert evaluate_condition(cond, ctx_with_env("staging")) is True
         assert evaluate_condition(cond, ctx_with_env("development")) is False
 
+    def test_empty_any_of_is_treated_as_unset(self):
+        cond = Condition(any_of=[])
+
+        assert evaluate_condition(cond, ctx_with_env("development")) is True
+
     def test_not_negates(self):
         cond = Condition(not_=Condition(context={"environment": "production"}))
 

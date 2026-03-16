@@ -112,7 +112,7 @@ def _evaluate_condition_depth(
         ):
             return False
 
-    if condition.any_of is not None:
+    if condition.any_of:
         if not any(
             _evaluate_condition_depth(c, context, depth + 1) for c in condition.any_of
         ):

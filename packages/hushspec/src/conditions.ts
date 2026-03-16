@@ -71,7 +71,7 @@ function evaluateConditionDepth(
     }
   }
 
-  if (condition.any_of != null) {
+  if (condition.any_of != null && condition.any_of.length > 0) {
     if (
       !condition.any_of.some((c) =>
         evaluateConditionDepth(c, context, depth + 1),

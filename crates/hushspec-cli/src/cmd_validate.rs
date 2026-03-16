@@ -183,9 +183,7 @@ fn validate_content(
     }
 
     // Layer 3: strict extends resolution
-    if strict
-        && let Err(error) = resolve_from_path_with_builtins(path)
-    {
+    if strict && let Err(error) = resolve_from_path_with_builtins(path) {
         errors.push(ErrorEntry {
             code: "E010".into(),
             message: format!("extends resolution failed: {error}"),

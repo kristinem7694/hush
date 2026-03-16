@@ -2,6 +2,7 @@ use clap::ValueEnum;
 use colored::Colorize;
 use hushspec::HushSpec;
 use hushspec::schema::MergeStrategy;
+use serde::Serialize;
 use similar::TextDiff;
 use std::path::PathBuf;
 
@@ -244,35 +245,28 @@ fn format_spec(spec: &HushSpec) -> String {
 
     // rules
     if let Some(rules) = &spec.rules {
-        out.push_str("rules:\n");
-        format_rules(rules, &mut out);
+        let mut rules_out = String::new();
+        format_rules(rules, &mut rules_out);
+        if !rules_out.is_empty() {
+            out.push_str("rules:\n");
+            out.push_str(&rules_out);
+        }
     }
 
     // extensions
-    if let Some(extensions) = &spec.extensions {
+    if let Some(extensions) = &spec.extensions
+        && let Some(block) = indented_yaml_block(extensions, 2)
+    {
         out.push_str("extensions:\n");
-        // Serialize extensions using serde_yaml and indent
-        if let Ok(yaml) = serde_yaml::to_string(extensions) {
-            for line in yaml.lines() {
-                if line == "---" {
-                    continue;
-                }
-                out.push_str(&format!("  {line}\n"));
-            }
-        }
+        out.push_str(&block);
     }
 
     // metadata
-    if let Some(metadata) = &spec.metadata {
+    if let Some(metadata) = &spec.metadata
+        && let Some(block) = indented_yaml_block(metadata, 2)
+    {
         out.push_str("metadata:\n");
-        if let Ok(yaml) = serde_yaml::to_string(metadata) {
-            for line in yaml.lines() {
-                if line == "---" {
-                    continue;
-                }
-                out.push_str(&format!("  {line}\n"));
-            }
-        }
+        out.push_str(&block);
     }
 
     out
@@ -563,6 +557,24 @@ fn format_merge_strategy(strategy: &MergeStrategy) -> &'static str {
     }
 }
 
+fn indented_yaml_block<T: Serialize>(value: &T, indent: usize) -> Option<String> {
+    let yaml = serde_yaml::to_string(value).ok()?;
+    let indent_str = " ".repeat(indent);
+    let mut block = String::new();
+
+    for line in yaml.lines() {
+        let trimmed = line.trim();
+        if trimmed == "---" || trimmed.is_empty() || trimmed == "{}" || trimmed == "null" {
+            continue;
+        }
+        block.push_str(&indent_str);
+        block.push_str(line);
+        block.push('\n');
+    }
+
+    if block.is_empty() { None } else { Some(block) }
+}
+
 fn format_severity(severity: &hushspec::Severity) -> &'static str {
     match severity {
         hushspec::Severity::Critical => "critical",
@@ -694,5 +706,26 @@ mod tests {
             parsed.get("hushspec").and_then(|value| value.as_str()),
             Some("0.1.0\"\nnext")
         );
+    }
+
+    #[test]
+    fn format_spec_omits_empty_sections_to_stay_idempotent() {
+        let spec = HushSpec::parse(
+            r#"hushspec: "0.1.0"
+rules: {}
+extensions: {}
+metadata: {}
+"#,
+        )
+        .expect("spec should parse");
+
+        let formatted = format_spec(&spec);
+        assert!(!formatted.contains("\nrules:\n"));
+        assert!(!formatted.contains("\nextensions:\n"));
+        assert!(!formatted.contains("\nmetadata:\n"));
+
+        let reparsed = HushSpec::parse(&formatted).expect("formatted YAML should parse");
+        let reformatted = format_spec(&reparsed);
+        assert_eq!(formatted, reformatted);
     }
 }

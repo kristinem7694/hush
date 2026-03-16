@@ -269,6 +269,14 @@ describe('evaluateCondition', () => {
       expect(evaluateCondition(cond, ctxWithEnv('development'))).toBe(false);
     });
 
+    it('treats empty any_of as unset', () => {
+      const cond: Condition = {
+        any_of: [],
+      };
+
+      expect(evaluateCondition(cond, ctxWithEnv('development'))).toBe(true);
+    });
+
     it('not negates condition', () => {
       const cond: Condition = {
         not: { context: { environment: 'production' } },
