@@ -17,6 +17,11 @@
     "test:watch": "vitest"
   },
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/backbay-labs/hush",
+    "directory": "packages/hushspec"
+  },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.7.0",
