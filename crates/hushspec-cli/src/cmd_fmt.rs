@@ -535,10 +535,72 @@ fn yaml_double_quoted_scalar(s: &str) -> String {
 }
 
 fn looks_like_special_yaml(s: &str) -> bool {
+    if looks_like_yaml_11_keyword(s)
+        || looks_like_yaml_11_radix_number(s)
+        || looks_like_yaml_11_float_literal(s)
+    {
+        return true;
+    }
+
+    let candidate = format!("value: {s}\n");
+    let Ok(parsed) = serde_yaml::from_str::<serde_yaml::Value>(&candidate) else {
+        return true;
+    };
+
+    let key = serde_yaml::Value::String("value".to_string());
+    match parsed {
+        serde_yaml::Value::Mapping(map) => {
+            !matches!(map.get(&key), Some(serde_yaml::Value::String(value)) if value == s)
+        }
+        _ => true,
+    }
+}
+
+fn looks_like_yaml_11_keyword(s: &str) -> bool {
     matches!(
-        s.to_lowercase().as_str(),
-        "true" | "false" | "yes" | "no" | "on" | "off" | "null" | "~"
-    ) || s.parse::<f64>().is_ok()
+        s.to_ascii_lowercase().as_str(),
+        "true" | "false" | "yes" | "no" | "on" | "off" | "null" | "~" | "y" | "n"
+    )
+}
+
+fn looks_like_yaml_11_radix_number(s: &str) -> bool {
+    let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
+    let is_digits = |value: &str, radix: u32| {
+        !value.is_empty() && value.chars().all(|ch| ch == '_' || ch.is_digit(radix))
+    };
+
+    if let Some(value) = unsigned
+        .strip_prefix("0x")
+        .or_else(|| unsigned.strip_prefix("0X"))
+    {
+        return is_digits(value, 16);
+    }
+
+    if let Some(value) = unsigned
+        .strip_prefix("0o")
+        .or_else(|| unsigned.strip_prefix("0O"))
+    {
+        return is_digits(value, 8);
+    }
+
+    if let Some(value) = unsigned
+        .strip_prefix("0b")
+        .or_else(|| unsigned.strip_prefix("0B"))
+    {
+        return is_digits(value, 2);
+    }
+
+    false
+}
+
+fn looks_like_yaml_11_float_literal(s: &str) -> bool {
+    matches!(
+        s.strip_prefix(['+', '-'])
+            .unwrap_or(s)
+            .to_ascii_lowercase()
+            .as_str(),
+        ".inf" | ".nan"
+    )
 }
 
 fn format_f64(v: f64) -> String {
@@ -603,7 +665,7 @@ fn compute_diff(original: &str, formatted: &str, path: &std::path::Path) -> Stri
 
 #[cfg(test)]
 mod tests {
-    use super::format_spec;
+    use super::{format_spec, yaml_scalar};
     use hushspec::HushSpec;
     use hushspec::schema::MergeStrategy;
 
@@ -727,5 +789,24 @@ metadata: {}
         let reparsed = HushSpec::parse(&formatted).expect("formatted YAML should parse");
         let reformatted = format_spec(&reparsed);
         assert_eq!(formatted, reformatted);
+    }
+
+    #[test]
+    fn yaml_scalar_quotes_yaml_11_special_values() {
+        for value in ["Y", "n", "0xFF", "0o777", "0b1010", ".inf", ".nan"] {
+            let rendered = yaml_scalar(value);
+            assert!(
+                rendered.starts_with('"') && rendered.ends_with('"'),
+                "{value} should be quoted, got {rendered}"
+            );
+
+            let parsed: serde_yaml::Value =
+                serde_yaml::from_str(&format!("field: {rendered}\n")).expect("YAML should parse");
+            assert_eq!(
+                parsed.get("field").and_then(|node| node.as_str()),
+                Some(value),
+                "round-trip changed {value}"
+            );
+        }
     }
 }
