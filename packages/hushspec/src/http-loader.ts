@@ -17,11 +17,39 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_SIZE = 1_048_576; // 1 MB
 
 function isPrivateIp(ip: string): boolean {
-  if (ip === '::1' || ip === '0:0:0:0:0:0:0:1') {
+  const normalized = ip.toLowerCase().split('%')[0];
+  if (normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') {
     return true;
   }
 
-  const parts = ip.split('.').map(Number);
+  const mappedIndex = normalized.lastIndexOf(':');
+  if (mappedIndex >= 0 && normalized.includes('.')) {
+    const mappedIpv4 = normalized.slice(mappedIndex + 1);
+    if (mappedIpv4 !== normalized && isPrivateIp(mappedIpv4)) {
+      return true;
+    }
+  }
+
+  if (normalized.includes(':')) {
+    if (normalized === '::') {
+      return true;
+    }
+
+    const firstSegment = normalized.split(':', 1)[0];
+    const firstHextet = parseInt(firstSegment || '0', 16);
+    if (!Number.isNaN(firstHextet)) {
+      if ((firstHextet & 0xfe00) === 0xfc00) {
+        return true;
+      }
+      if ((firstHextet & 0xffc0) === 0xfe80) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  const parts = normalized.split('.').map(Number);
   if (parts.length === 4 && parts.every((p) => !isNaN(p))) {
     const [a, b] = parts;
     // 127.0.0.0/8

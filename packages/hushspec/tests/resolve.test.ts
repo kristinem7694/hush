@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseOrThrow } from '../src/parse.js';
 import { resolve, resolveFromFile, createCompositeLoader } from '../src/resolve.js';
 import { loadBuiltin, BUILTIN_NAMES } from '../src/builtin.js';
+import { createHttpLoader } from '../src/http-loader.js';
 
 describe('resolve', () => {
   it('resolves extends chains from the filesystem', () => {
@@ -127,6 +128,21 @@ describe('builtin loader', () => {
     expect(loadBuiltin('nonexistent')).toBeNull();
     expect(loadBuiltin('builtin:nonexistent')).toBeNull();
   });
+
+  it('loads builtins outside the repository working tree', () => {
+    const originalCwd = process.cwd();
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'hushspec-builtin-'));
+    process.chdir(tmpDir);
+
+    try {
+      const spec = loadBuiltin('default');
+      expect(spec).not.toBeNull();
+      expect(spec!.name).toBe('default');
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('extends: builtin', () => {
@@ -173,5 +189,17 @@ name: custom-strict
     const loader = createCompositeLoader();
     expect(() => loader('https://example.com/policy.yaml')).toThrow('HTTP-based policy loading');
     expect(() => loader('http://example.com/policy.yaml')).toThrow('HTTP-based policy loading');
+  });
+});
+
+describe('http loader', () => {
+  it('rejects private IPv6 targets before fetching', async () => {
+    const mockFetch = vi.fn();
+    vi.stubGlobal('fetch', mockFetch);
+    const loader = createHttpLoader();
+
+    await expect(loader('https://[fc00::1]/policy.yaml')).rejects.toThrow('SSRF protection');
+    await expect(loader('https://[fe80::1]/policy.yaml')).rejects.toThrow('SSRF protection');
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

@@ -105,6 +105,8 @@ pub mod http {
             IpAddr::V6(v6) => {
                 v6.is_loopback()          // ::1
                     || v6.is_unspecified() // ::
+                    || v6.is_unique_local() // fc00::/7
+                    || v6.is_unicast_link_local() // fe80::/10
                     // IPv4-mapped addresses
                     || v6.to_ipv4_mapped().is_some_and(|v4| {
                         v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
@@ -394,6 +396,18 @@ pub mod http {
         }
 
         #[test]
+        fn rejects_ipv6_unique_local() {
+            let result = validate_url("https://[fc00::1]/policy.yaml");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn rejects_ipv6_link_local() {
+            let result = validate_url("https://[fe80::1]/policy.yaml");
+            assert!(result.is_err());
+        }
+
+        #[test]
         fn accepts_valid_https_url() {
             // This test requires network access so we just validate the URL
             // parsing without actually connecting.
@@ -422,6 +436,8 @@ pub mod http {
             assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
             assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
             assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
+            assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::new(0xfc00, 0, 0, 0, 0, 0, 0, 1))));
+            assert!(is_private_ip(&IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1))));
             assert!(is_private_ip(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
 
             assert!(!is_private_ip(&IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
