@@ -53,6 +53,7 @@ CONTRACT = {
         "TOP_LEVEL_KEYS": top_props(CORE),
         "RULE_KEYS": def_props(CORE, "Rules"),
         "EXTENSION_KEYS": def_props(CORE, "Extensions"),
+        "GOVERNANCE_METADATA_KEYS": def_props(CORE, "GovernanceMetadata"),
         "FORBIDDEN_PATH_KEYS": def_props(CORE, "ForbiddenPaths"),
         "PATH_ALLOWLIST_KEYS": def_props(CORE, "PathAllowlist"),
         "EGRESS_KEYS": def_props(CORE, "Egress"),
@@ -89,6 +90,8 @@ CONTRACT = {
         "ORIGIN_SPACE_TYPES": enum_values(ORIGINS, "OriginMatch", "space_type"),
         "ORIGIN_VISIBILITIES": enum_values(ORIGINS, "OriginMatch", "visibility"),
         "DETECTION_LEVELS": list(DETECTION["$defs"]["Level"]["enum"]),
+        "CLASSIFICATIONS": enum_values(CORE, "GovernanceMetadata", "classification"),
+        "LIFECYCLE_STATES": enum_values(CORE, "GovernanceMetadata", "lifecycle_state"),
     },
 }
 
@@ -103,6 +106,8 @@ TS_TYPE_NAMES = {
     "ORIGIN_SPACE_TYPES": "OriginSpaceTypeValue",
     "ORIGIN_VISIBILITIES": "OriginVisibilityValue",
     "DETECTION_LEVELS": "DetectionLevelValue",
+    "CLASSIFICATIONS": "ClassificationValue",
+    "LIFECYCLE_STATES": "LifecycleStateValue",
 }
 
 
@@ -113,6 +118,8 @@ GO_TYPED_ENUMS = {
     "TRANSITION_TRIGGERS": "TransitionTrigger",
     "ORIGIN_DEFAULT_BEHAVIORS": "OriginDefaultBehavior",
     "DETECTION_LEVELS": "DetectionLevel",
+    "CLASSIFICATIONS": "Classification",
+    "LIFECYCLE_STATES": "LifecycleState",
 }
 
 

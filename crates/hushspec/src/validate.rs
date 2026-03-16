@@ -3,38 +3,38 @@ use crate::version;
 use regex::Regex;
 use std::collections::HashSet;
 
-/// Result of validating a HushSpec document.
 #[derive(Debug, Clone)]
 pub struct ValidationResult {
-    /// Errors that make the document invalid.
     pub errors: Vec<ValidationError>,
-    /// Non-fatal observations about the document.
     pub warnings: Vec<String>,
 }
 
 impl ValidationResult {
-    /// Returns `true` if no validation errors were found.
     #[must_use]
     pub fn is_valid(&self) -> bool {
         self.errors.is_empty()
     }
 }
 
-/// A validation error found in a HushSpec document.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum ValidationError {
-    /// The `hushspec` version string is not recognized.
     #[error("unsupported hushspec version: {0}")]
     UnsupportedVersion(String),
-    /// Two secret patterns share the same name.
     #[error("duplicate secret pattern name: {0}")]
     DuplicatePatternName(String),
-    /// A structural constraint was violated.
+    /// Regex uses features outside the RE2 subset (backreferences, lookahead, etc.).
+    /// The Rust `regex` crate enforces RE2 semantics, ensuring any accepted pattern
+    /// is safe from ReDoS across all HushSpec SDKs.
+    #[error("{field}: invalid regex pattern {pattern:?}: {message}")]
+    InvalidRegex {
+        field: String,
+        pattern: String,
+        message: String,
+    },
     #[error("{0}")]
     Custom(String),
 }
 
-/// Validate a parsed HushSpec document for structural correctness.
 #[must_use = "validation result should be checked"]
 pub fn validate(spec: &HushSpec) -> ValidationResult {
     let mut errors = Vec::new();
@@ -68,6 +68,10 @@ pub fn validate(spec: &HushSpec) -> ValidationResult {
         validate_posture(ext, &mut errors, &mut warnings);
         validate_origins(ext, &mut errors);
         validate_detection(ext, &mut errors, &mut warnings);
+    }
+
+    for gw in crate::governance::validate_governance(spec) {
+        warnings.push(gw.message);
     }
 
     ValidationResult { errors, warnings }
@@ -381,9 +385,11 @@ fn validate_detection(
 
 fn validate_regex(pattern: &str, path: &str, errors: &mut Vec<ValidationError>) {
     if let Err(error) = Regex::new(pattern) {
-        errors.push(ValidationError::Custom(format!(
-            "{path} must be a valid regular expression: {error}"
-        )));
+        errors.push(ValidationError::InvalidRegex {
+            field: path.to_string(),
+            pattern: pattern.to_string(),
+            message: error.to_string(),
+        });
     }
 }
 

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/hushspec",
     "crates/hushspec-testkit",
+    "crates/hushspec-cli",
 ]
 
 [workspace.package]

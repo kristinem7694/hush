@@ -10,6 +10,7 @@ var TopLevelKeys = map[string]struct{}{
 	"merge_strategy": {},
 	"rules":          {},
 	"extensions":     {},
+	"metadata":       {},
 }
 
 var RuleKeys = map[string]struct{}{
@@ -29,6 +30,18 @@ var ExtensionKeys = map[string]struct{}{
 	"posture":   {},
 	"origins":   {},
 	"detection": {},
+}
+
+var GovernanceMetadataKeys = map[string]struct{}{
+	"author":          {},
+	"approved_by":     {},
+	"approval_date":   {},
+	"classification":  {},
+	"change_ticket":   {},
+	"lifecycle_state": {},
+	"policy_version":  {},
+	"effective_date":  {},
+	"expiry_date":     {},
 }
 
 var ForbiddenPathKeys = map[string]struct{}{
@@ -268,4 +281,20 @@ var DetectionLevels = map[DetectionLevel]struct{}{
 	DetectionLevel("suspicious"): {},
 	DetectionLevel("high"):       {},
 	DetectionLevel("critical"):   {},
+}
+
+var Classifications = map[Classification]struct{}{
+	Classification("public"):       {},
+	Classification("internal"):     {},
+	Classification("confidential"): {},
+	Classification("restricted"):   {},
+}
+
+var LifecycleStates = map[LifecycleState]struct{}{
+	LifecycleState("draft"):      {},
+	LifecycleState("review"):     {},
+	LifecycleState("approved"):   {},
+	LifecycleState("deployed"):   {},
+	LifecycleState("deprecated"): {},
+	LifecycleState("archived"):   {},
 }

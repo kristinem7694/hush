@@ -1,5 +1,3 @@
-"""Tests for parse, validate, and merge — mirrors the Rust/TS test cases."""
-
 from hushspec import (
     DefaultAction,
     HushSpec,

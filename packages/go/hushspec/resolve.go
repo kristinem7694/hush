@@ -4,18 +4,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 )
 
-// LoadedSpec carries a loaded HushSpec document plus its canonical source ID.
+// LoadedSpec pairs a parsed HushSpec with the canonical path it was loaded from.
 type LoadedSpec struct {
 	Source string
 	Spec   *HushSpec
 }
 
-// ResolveLoader loads a referenced HushSpec and returns its canonical source.
+// ResolveLoader loads a HushSpec referenced by an extends field.
+// reference is the extends value; from is the source of the referencing document.
 type ResolveLoader func(reference string, from string) (*LoadedSpec, error)
 
-// Resolve resolves a parsed HushSpec document using the provided loader.
+// Resolve flattens the extends chain of a parsed HushSpec by repeatedly loading
+// and merging parent documents via the provided loader.
 func Resolve(spec *HushSpec, source string, loader ResolveLoader) (*HushSpec, error) {
 	if loader == nil {
 		loader = loadFromFilesystem
@@ -28,7 +32,7 @@ func Resolve(spec *HushSpec, source string, loader ResolveLoader) (*HushSpec, er
 	return resolveInner(spec, source, loader, stack)
 }
 
-// ResolveFile loads and resolves a HushSpec document from disk.
+// ResolveFile loads a HushSpec from disk and flattens its extends chain.
 func ResolveFile(path string) (*HushSpec, error) {
 	source, err := filepath.Abs(path)
 	if err != nil {
@@ -61,7 +65,7 @@ func resolveInner(spec *HushSpec, source string, loader ResolveLoader, stack []s
 
 	for index, entry := range stack {
 		if entry == loaded.Source {
-			cycle := append(append([]string{}, stack[index:]...), loaded.Source)
+			cycle := append(slices.Clone(stack[index:]), loaded.Source)
 			return nil, fmt.Errorf("circular extends detected: %s", joinChain(cycle))
 		}
 	}
@@ -77,10 +81,8 @@ func resolveInner(spec *HushSpec, source string, loader ResolveLoader, stack []s
 
 func loadFromFilesystem(reference string, from string) (*LoadedSpec, error) {
 	resolvedPath := reference
-	if !filepath.IsAbs(reference) {
-		if from != "" {
-			resolvedPath = filepath.Join(filepath.Dir(from), reference)
-		}
+	if !filepath.IsAbs(reference) && from != "" {
+		resolvedPath = filepath.Join(filepath.Dir(from), reference)
 	}
 
 	absPath, err := filepath.Abs(resolvedPath)
@@ -103,16 +105,5 @@ func loadFromFilesystem(reference string, from string) (*LoadedSpec, error) {
 }
 
 func joinChain(chain []string) string {
-	switch len(chain) {
-	case 0:
-		return ""
-	case 1:
-		return chain[0]
-	default:
-		result := chain[0]
-		for _, item := range chain[1:] {
-			result += " -> " + item
-		}
-		return result
-	}
+	return strings.Join(chain, " -> ")
 }

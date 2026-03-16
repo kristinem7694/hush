@@ -37,6 +37,8 @@ ENUMS = [
     },
     {"name": "OriginDefaultBehavior", "values": ["deny", "minimal_profile"], "default": "deny"},
     {"name": "DetectionLevel", "values": ["safe", "suspicious", "high", "critical"]},
+    {"name": "Classification", "values": ["public", "internal", "confidential", "restricted"]},
+    {"name": "LifecycleState", "values": ["draft", "review", "approved", "deployed", "deprecated", "archived"]},
 ]
 
 
@@ -90,6 +92,7 @@ STRUCTS = [
             field("merge_strategy", "MergeStrategy"),
             field("rules", "Rules"),
             field("extensions", "Extensions"),
+            field("metadata", "GovernanceMetadata"),
         ],
     },
     {
@@ -341,6 +344,20 @@ STRUCTS = [
             field("pattern_db", "string", go_pointer=True, go_name="PatternDB"),
             field("similarity_threshold", "float", go_pointer=True),
             field("top_k", "count", go_pointer=True),
+        ],
+    },
+    {
+        "name": "GovernanceMetadata",
+        "fields": [
+            field("author", "string"),
+            field("approved_by", "string"),
+            field("approval_date", "string"),
+            field("classification", "Classification"),
+            field("change_ticket", "string"),
+            field("lifecycle_state", "LifecycleState"),
+            field("policy_version", "count", go_pointer=True),
+            field("effective_date", "string"),
+            field("expiry_date", "string"),
         ],
     },
 ]

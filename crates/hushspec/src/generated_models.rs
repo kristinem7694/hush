@@ -64,6 +64,26 @@ pub enum DetectionLevel {
     Critical,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Classification {
+    Public,
+    Internal,
+    Confidential,
+    Restricted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LifecycleState {
+    Draft,
+    Review,
+    Approved,
+    Deployed,
+    Deprecated,
+    Archived,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HushSpec {
@@ -80,6 +100,8 @@ pub struct HushSpec {
     pub rules: Option<Rules>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extensions: Option<Extensions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<GovernanceMetadata>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
@@ -433,6 +455,29 @@ pub struct ThreatIntelDetection {
     pub similarity_threshold: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub top_k: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GovernanceMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classification: Option<Classification>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_ticket: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle_state: Option<LifecycleState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_version: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_date: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiry_date: Option<String>,
 }
 
 fn default_1000() -> usize {

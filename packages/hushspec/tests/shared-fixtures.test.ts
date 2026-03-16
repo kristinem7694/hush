@@ -6,6 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { merge } from '../src/merge.js';
 import { parse } from '../src/parse.js';
 import { validate } from '../src/validate.js';
+import { evaluate } from '../src/evaluate.js';
+import type { EvaluationAction } from '../src/evaluate.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const fixturesRoot = path.join(repoRoot, 'fixtures');
@@ -106,27 +108,45 @@ describe('shared fixture corpus', () => {
 
   for (const dir of evaluationDirs) {
     for (const fixturePath of listYamlFiles(dir)) {
+      const raw = YAML.parse(readFileSync(fixturePath, 'utf8')) as EvaluationFixture;
+      const policyYaml = YAML.stringify(raw.policy);
+      const parsed = parse(policyYaml);
+
       it(`validates evaluator fixture ${path.relative(fixturesRoot, fixturePath)}`, () => {
-        const raw = YAML.parse(readFileSync(fixturePath, 'utf8')) as EvaluationFixture;
         expect(raw.hushspec_test).toBe('0.1.0');
         expect(raw.description.trim().length).toBeGreaterThan(0);
         expect(Array.isArray(raw.cases)).toBe(true);
         expect(raw.cases.length).toBeGreaterThan(0);
-
-        for (const testCase of raw.cases) {
-          expect(testCase.description.trim().length).toBeGreaterThan(0);
-          expect(['allow', 'warn', 'deny']).toContain(testCase.expect.decision);
-          expect(typeof testCase.action).toBe('object');
-          expect(testCase.action).not.toBeNull();
-          expect(typeof testCase.action.type).toBe('string');
-        }
-
-        const policyYaml = YAML.stringify(raw.policy);
-        const parsed = parse(policyYaml);
         expect(parsed.ok).toBe(true);
         if (!parsed.ok) return;
         expect(validate(parsed.value).valid).toBe(true);
       });
+
+      if (!parsed.ok) continue;
+      const spec = parsed.value;
+
+      for (const testCase of raw.cases) {
+        it(`evaluates [${path.relative(fixturesRoot, fixturePath)}] ${testCase.description}`, () => {
+          const action = testCase.action as unknown as EvaluationAction;
+          const result = evaluate(spec, action);
+
+          expect(result.decision).toBe(testCase.expect.decision);
+
+          if (testCase.expect.matched_rule != null) {
+            expect(result.matched_rule).toBe(testCase.expect.matched_rule);
+          }
+
+          if (testCase.expect.origin_profile != null) {
+            expect(result.origin_profile).toBe(testCase.expect.origin_profile);
+          }
+
+          if (testCase.expect.posture != null) {
+            expect(result.posture).toBeDefined();
+            expect(result.posture!.current).toBe(testCase.expect.posture.current);
+            expect(result.posture!.next).toBe(testCase.expect.posture.next);
+          }
+        });
+      }
     }
   }
 });

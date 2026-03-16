@@ -1,34 +1,22 @@
-"""Validate a parsed HushSpec document for structural correctness.
-
-Ports the validation logic from the Rust implementation, checking:
-- Version support
-- Duplicate secret pattern names
-- Regex validity
-- Posture validation (initial state, transitions, budgets)
-- Origins validation (duplicate IDs, posture references)
-- Detection validation (threshold ordering, similarity range)
-"""
-
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
 
+from datetime import date
+
 from hushspec.extensions import DetectionLevel, TransitionTrigger
-from hushspec.schema import HushSpec
+from hushspec.schema import Classification, HushSpec, LifecycleState
 from hushspec.version import is_supported
 
-# Known capability names (for warnings)
 _CAPABILITY_NAMES = frozenset(
     {"file_access", "file_write", "egress", "shell", "tool_call", "patch", "custom"}
 )
 
-# Known budget key names (for warnings)
 _BUDGET_NAMES = frozenset(
     {"file_writes", "egress_calls", "shell_commands", "tool_calls", "patches", "custom_calls"}
 )
 
-# Duration pattern: digits followed by s/m/h/d
 _DURATION_PATTERN = re.compile(r"^\d+[smhd]$")
 _DETECTION_LEVEL_ORDER = {
     DetectionLevel.SAFE: 0,
@@ -40,8 +28,6 @@ _DETECTION_LEVEL_ORDER = {
 
 @dataclass
 class ValidationError:
-    """A validation error found in a HushSpec document."""
-
     code: str
     message: str
 
@@ -51,33 +37,26 @@ class ValidationError:
 
 @dataclass
 class ValidationResult:
-    """Result of validating a HushSpec document."""
-
     errors: list[ValidationError] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     @property
     def is_valid(self) -> bool:
-        """Returns ``True`` if no validation errors were found."""
-        return len(self.errors) == 0
+        return not self.errors
 
 
 def validate(spec: HushSpec) -> ValidationResult:
-    """Validate a parsed HushSpec document for structural correctness."""
     errors: list[ValidationError] = []
     warnings: list[str] = []
 
-    # Version check
     if not is_supported(spec.hushspec):
         errors.append(
             ValidationError("unsupported_version", f"unsupported hushspec version: {spec.hushspec}")
         )
 
-    # Rules validation
     if spec.rules is not None:
         _validate_rules(spec.rules, errors)
 
-        # Check if any rules are configured
         if (
             spec.rules.forbidden_paths is None
             and spec.rules.path_allowlist is None
@@ -94,11 +73,12 @@ def validate(spec: HushSpec) -> ValidationResult:
     else:
         warnings.append("no rules section present")
 
-    # Extensions validation
     if spec.extensions is not None:
         _validate_posture(spec.extensions, errors, warnings)
         _validate_origins(spec.extensions, errors)
         _validate_detection(spec.extensions, errors, warnings)
+
+    _validate_governance(spec, warnings)
 
     return ValidationResult(errors=errors, warnings=warnings)
 
@@ -108,7 +88,6 @@ def _validate_rules(rules: object, errors: list[ValidationError]) -> None:
 
     assert isinstance(rules, Rules)
 
-    # Secret patterns: duplicate names and regex validity
     if rules.secret_patterns is not None:
         seen: set[str] = set()
         for pattern in rules.secret_patterns.patterns:
@@ -126,7 +105,6 @@ def _validate_rules(rules: object, errors: list[ValidationError]) -> None:
                 errors,
             )
 
-    # Patch integrity
     if rules.patch_integrity is not None:
         if rules.patch_integrity.max_imbalance_ratio <= 0.0:
             errors.append(
@@ -142,7 +120,6 @@ def _validate_rules(rules: object, errors: list[ValidationError]) -> None:
                 errors,
             )
 
-    # Shell commands: regex validity
     if rules.shell_commands is not None:
         for index, pattern in enumerate(rules.shell_commands.forbidden_patterns):
             _validate_regex(
@@ -151,7 +128,6 @@ def _validate_rules(rules: object, errors: list[ValidationError]) -> None:
                 errors,
             )
 
-    # Tool access: max_args_size
     if rules.tool_access is not None and rules.tool_access.max_args_size == 0:
         errors.append(
             ValidationError(
@@ -171,8 +147,7 @@ def _validate_posture(ext: object, errors: list[ValidationError], warnings: list
 
     posture = ext.posture
 
-    # Must have at least one state
-    if len(posture.states) == 0:
+    if not posture.states:
         errors.append(
             ValidationError(
                 "empty_states",
@@ -180,7 +155,6 @@ def _validate_posture(ext: object, errors: list[ValidationError], warnings: list
             )
         )
 
-    # Initial state must exist
     if posture.initial not in posture.states:
         errors.append(
             ValidationError(
@@ -189,7 +163,6 @@ def _validate_posture(ext: object, errors: list[ValidationError], warnings: list
             )
         )
 
-    # Validate each state
     for state_name, state in posture.states.items():
         for capability in state.capabilities:
             if capability not in _CAPABILITY_NAMES:
@@ -210,7 +183,6 @@ def _validate_posture(ext: object, errors: list[ValidationError], warnings: list
                     f"posture.states.{state_name}.budgets uses unknown budget key '{budget_key}'"
                 )
 
-    # Validate transitions
     for index, transition in enumerate(posture.transitions):
         if transition.from_state != "*" and transition.from_state not in posture.states:
             errors.append(
@@ -235,7 +207,6 @@ def _validate_posture(ext: object, errors: list[ValidationError], warnings: list
                 )
             )
 
-        # Non-timeout triggers with after: validate duration format
         if transition.on != TransitionTrigger.TIMEOUT:
             if transition.after is not None and not _is_valid_duration(transition.after):
                 errors.append(
@@ -245,7 +216,6 @@ def _validate_posture(ext: object, errors: list[ValidationError], warnings: list
                     )
                 )
 
-        # Timeout trigger requires after field
         if transition.on == TransitionTrigger.TIMEOUT:
             if transition.after is None:
                 errors.append(
@@ -273,14 +243,12 @@ def _validate_origins(ext: object, errors: list[ValidationError]) -> None:
 
     origins = ext.origins
 
-    # Build set of posture state names if posture is defined
     posture_states: set[str] | None = None
     if ext.posture is not None:
-        posture_states = set(ext.posture.states.keys())
+        posture_states = set(ext.posture.states)
 
     seen_ids: set[str] = set()
     for index, profile in enumerate(origins.profiles):
-        # Duplicate ID check
         if profile.id in seen_ids:
             errors.append(
                 ValidationError(
@@ -290,7 +258,6 @@ def _validate_origins(ext: object, errors: list[ValidationError]) -> None:
             )
         seen_ids.add(profile.id)
 
-        # Posture reference check
         if profile.posture is not None:
             if posture_states is None:
                 errors.append(
@@ -320,11 +287,10 @@ def _validate_detection(
 
     detection = ext.detection
 
-    # Prompt injection
     if detection.prompt_injection is not None:
         pi = detection.prompt_injection
 
-        if pi.max_scan_bytes is not None and pi.max_scan_bytes == 0:
+        if pi.max_scan_bytes == 0:
             errors.append(
                 ValidationError(
                     "invalid_max_scan_bytes",
@@ -339,7 +305,6 @@ def _validate_detection(
                 "detection.prompt_injection: block_at_or_above is less strict than warn_at_or_above"
             )
 
-    # Jailbreak
     if detection.jailbreak is not None:
         jb = detection.jailbreak
 
@@ -357,7 +322,7 @@ def _validate_detection(
                     "detection.jailbreak.warn_threshold must be between 0 and 100",
                 )
             )
-        if jb.max_input_bytes is not None and jb.max_input_bytes == 0:
+        if jb.max_input_bytes == 0:
             errors.append(
                 ValidationError(
                     "invalid_max_input_bytes",
@@ -372,7 +337,6 @@ def _validate_detection(
                 "detection.jailbreak: block_threshold is lower than warn_threshold"
             )
 
-    # Threat intel
     if detection.threat_intel is not None:
         ti = detection.threat_intel
 
@@ -385,7 +349,7 @@ def _validate_detection(
                     )
                 )
 
-        if ti.top_k is not None and ti.top_k == 0:
+        if ti.top_k == 0:
             errors.append(
                 ValidationError(
                     "invalid_top_k",
@@ -394,8 +358,39 @@ def _validate_detection(
             )
 
 
+# Pattern that detects regex features outside the RE2 subset.
+#
+# HushSpec requires all regex patterns to be RE2-compatible to prevent ReDoS
+# attacks. Python's ``re`` module uses a backtracking engine that is vulnerable
+# to catastrophic backtracking with certain pattern constructs.  By restricting
+# patterns to the RE2 subset we ensure safe O(mn) evaluation across all SDKs.
+#
+# Disallowed features:
+# - Backreferences: \1, \2, ..., \k<name>
+# - Lookahead: (?=...), (?!...)
+# - Lookbehind: (?<=...), (?<!...)
+# - Atomic groups: (?>...)
+# - Possessive quantifiers: *+, ++, ?+
+# - Conditional patterns: (?(...)...|...)
+# - Recursive patterns: (?R), (?1), (?2), ...
+# - Named backreferences: (?P=name)
+# - Subroutine calls: \g<name>
+_RE2_DISALLOWED = re.compile(
+    r"\\[1-9]|\\k<|\(\?[=!]|\(\?<[=!]|\(\?>|\*\+|\+\+|\?\+|\(\?\(|\(\?R\)|\(\?\d+\)|\(\?P=|\\g<"
+)
+
+
+def is_safe_regex(pattern: str) -> bool:
+    """Check whether a regex pattern is safe for evaluation (RE2-compatible).
+
+    Returns ``True`` if the pattern uses only RE2-compatible features.
+    Returns ``False`` if the pattern contains backreferences, lookaround,
+    atomic groups, possessive quantifiers, or other non-RE2 features.
+    """
+    return _RE2_DISALLOWED.search(pattern) is None
+
+
 def _validate_regex(pattern: str, path: str, errors: list[ValidationError]) -> None:
-    """Validate that a string is a valid regular expression."""
     try:
         re.compile(pattern)
     except re.error as e:
@@ -405,8 +400,43 @@ def _validate_regex(pattern: str, path: str, errors: list[ValidationError]) -> N
                 f"{path} must be a valid regular expression: {e}",
             )
         )
+        return
+
+    if not is_safe_regex(pattern):
+        errors.append(
+            ValidationError(
+                "non_re2_regex",
+                f"{path}: pattern uses features not in the RE2 subset "
+                "(backreferences, lookaround, etc.) which may cause ReDoS",
+            )
+        )
 
 
 def _is_valid_duration(value: str) -> bool:
-    """Check if a string matches the duration pattern (digits + s/m/h/d)."""
     return bool(_DURATION_PATTERN.match(value))
+
+
+def _validate_governance(spec: HushSpec, warnings: list[str]) -> None:
+    if spec.metadata is None:
+        return
+
+    metadata = spec.metadata
+
+    if metadata.lifecycle_state is not None:
+        if metadata.lifecycle_state in (LifecycleState.DEPRECATED, LifecycleState.ARCHIVED):
+            warnings.append(
+                f"policy lifecycle state is '{metadata.lifecycle_state.value}'"
+            )
+
+    if metadata.expiry_date is not None:
+        today = date.today().isoformat()
+        if metadata.expiry_date < today:
+            warnings.append(
+                f"policy expiry_date '{metadata.expiry_date}' is in the past"
+            )
+
+    if metadata.approved_by is not None and metadata.approval_date is None:
+        warnings.append("approved_by is set but approval_date is missing")
+
+    if metadata.classification == Classification.RESTRICTED and metadata.approved_by is None:
+        warnings.append("classification is 'restricted' but no approved_by is set")

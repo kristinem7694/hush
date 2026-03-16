@@ -1,0 +1,179 @@
+# Compliance: FERPA (34 CFR Part 99) -- 99.3, 99.30, 99.31, 99.33
+#
+# DISCLAIMER: Starting point only. Review with your FERPA compliance officer
+# and general counsel before production use.
+hushspec: "0.1.0"
+name: ferpa-student
+description: >
+  FERPA-aligned policy. Detects student PII, restricts access to student
+  record directories, and limits egress to approved educational platforms.
+extends: "builtin:default"
+
+rules:
+  # --- 34 CFR 99.3: Education records ---
+  forbidden_paths:
+    patterns:
+      # Student records directories
+      - "**/student-records/**"
+      - "**/student_records/**"
+      - "**/student-data/**"
+      - "**/student_data/**"
+      - "**/enrollments/**"
+      - "**/transcripts/**"
+      - "**/grades/**"
+      - "**/academic-records/**"
+      - "**/academic_records/**"
+      - "**/financial-aid/**"
+      - "**/financial_aid/**"
+      - "**/disciplinary/**"
+      # Student Information System (SIS)
+      - "**/sis-data/**"
+      - "**/sis_data/**"
+      - "**/registrar/**"
+      # Credential stores
+      - "**/.ssh/**"
+      - "**/.aws/**"
+      - "**/.env"
+      - "**/.env.*"
+      - "**/.git-credentials"
+      - "**/.gnupg/**"
+      - "**/.kube/**"
+      - "**/.docker/**"
+      - "**/.npmrc"
+      - "**/.password-store/**"
+      - "**/.1password/**"
+      - "/etc/shadow"
+      - "/etc/passwd"
+      - "/etc/sudoers"
+    exceptions:
+      - "**/.env.example"
+      - "**/.env.template"
+      - "**/test/fixtures/**"
+
+  # --- 34 CFR 99.33: Limitations on redisclosure ---
+  egress:
+    allow:
+      # Learning Management Systems
+      - "*.instructure.com"
+      - "*.blackboard.com"
+      - "*.d2l.com"
+      - "*.moodle.org"
+      # Student Information Systems
+      - "*.ellucian.com"
+      - "*.powerschool.com"
+      - "*.infinite.campus"
+      # Package registries (for development)
+      - "registry.npmjs.org"
+      - "pypi.org"
+      - "files.pythonhosted.org"
+      - "crates.io"
+      - "static.crates.io"
+      # Code hosting
+      - "api.github.com"
+      - "github.com"
+      - "*.githubusercontent.com"
+    block:
+      # 34 CFR 99.33 -- data-sharing platforms
+      - "*.pastebin.com"
+      - "*.transfer.sh"
+      - "*.file.io"
+      - "*.wetransfer.com"
+      # Consumer storage
+      - "*.dropbox.com"
+      - "drive.google.com"
+      - "*.onedrive.live.com"
+      # Social media
+      - "*.twitter.com"
+      - "*.x.com"
+      - "*.facebook.com"
+      - "*.reddit.com"
+      - "*.tiktok.com"
+    default: block
+
+  # --- 34 CFR 99.3: Student PII detection ---
+  secret_patterns:
+    patterns:
+      # 34 CFR 99.3 -- student PII
+      - name: student_id
+        pattern: "(?i)(student[\\s_-]?(id|number|num|no))\\s*:?\\s*[A-Z0-9]{5,15}"
+        severity: critical
+        description: "Student ID number -- 34 CFR 99.3 PII from education records"
+      - name: ssn
+        pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+        severity: critical
+        description: "Social Security Number -- 34 CFR 99.3 PII"
+      - name: student_name_pattern
+        pattern: "(?i)(student[\\s_-]?(name|nm))\\s*:?\\s*[A-Z][a-z]+\\s+[A-Z][a-z]+"
+        severity: critical
+        description: "Student name field -- 34 CFR 99.3 PII"
+      - name: grade_record
+        pattern: "(?i)(grade|gpa|score)\\s*[:=]\\s*[0-9A-F][.+-]?"
+        severity: error
+        description: "Grade or GPA value -- education record under 34 CFR 99.3"
+      - name: date_of_birth
+        pattern: "(?i)(dob|date[\\s_-]?of[\\s_-]?birth)\\s*:?\\s*\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}"
+        severity: critical
+        description: "Date of birth -- 34 CFR 99.3 PII"
+      - name: financial_aid_amount
+        pattern: "(?i)(financial[\\s_-]?aid|scholarship|grant|loan)\\s*[:=]\\s*\\$?[0-9,.]+"
+        severity: error
+        description: "Financial aid amount -- education record under 34 CFR 99.3"
+      # Infrastructure secrets
+      - name: aws_access_key
+        pattern: "AKIA[0-9A-Z]{16}"
+        severity: critical
+      - name: private_key
+        pattern: "-----BEGIN\\s+(RSA\\s+)?PRIVATE\\s+KEY-----"
+        severity: critical
+      - name: generic_api_key
+        pattern: "(?i)(api[_\\-]?key|apikey)\\s*[:=]\\s*[A-Za-z0-9]{32,}"
+        severity: error
+    skip_paths:
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/fixtures/**"
+
+  # --- 34 CFR 99.30: Patch integrity ---
+  patch_integrity:
+    max_additions: 500
+    max_deletions: 250
+    require_balance: false
+    max_imbalance_ratio: 8.0
+    forbidden_patterns:
+      - "(?i)disable[\\s_\\-]?(security|auth|ssl|tls)"
+      - "(?i)skip[\\s_\\-]?(verify|validation|check)"
+      - "(?i)rm\\s+-rf\\s+/"
+      - "(?i)chmod\\s+777"
+      - "(?i)(student_id|student_name|enrollment|transcript)"
+
+  shell_commands:
+    forbidden_patterns:
+      - "(?i)rm\\s+-rf\\s+/"
+      - "curl.*\\|.*sh"
+      - "wget.*\\|.*bash"
+      - "(?i)scp\\s"
+
+  # --- 34 CFR 99.31: Tool access ---
+  tool_access:
+    allow:
+      - read_file
+      - write_file
+      - list_directory
+      - search
+      - grep
+      - run_tests
+      - build
+    block:
+      - shell_exec
+      - run_command
+      - deploy_production
+      - raw_file_write
+      - raw_file_delete
+      - database_query
+      - database_write
+    require_confirmation:
+      - file_write
+      - file_delete
+      - git_push
+    default: block
+    max_args_size: 524288

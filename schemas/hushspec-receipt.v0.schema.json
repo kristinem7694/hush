@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hushspec.dev/schemas/hushspec-receipt.v0.schema.json",
+  "title": "HushSpec Decision Receipt v0",
+  "description": "A self-contained record of a single HushSpec policy evaluation decision. Receipts capture the full context of an evaluation: the action that was evaluated, the decision that was reached, the rule trace showing every rule block consulted, and the policy identity.",
+  "type": "object",
+  "required": [
+    "receipt_id",
+    "timestamp",
+    "hushspec_version",
+    "action",
+    "decision",
+    "rule_trace",
+    "policy",
+    "evaluation_duration_us"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "receipt_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+      "description": "Unique identifier for this receipt (UUID v4)."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of when the evaluation occurred, with UTC timezone (Z suffix)."
+    },
+    "hushspec_version": {
+      "type": "string",
+      "description": "The HushSpec specification version used for evaluation."
+    },
+    "action": {
+      "$ref": "#/$defs/ActionSummary"
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["allow", "warn", "deny"],
+      "description": "The final evaluation decision: allow, warn, or deny."
+    },
+    "matched_rule": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "The rule path that determined the final decision (e.g., 'rules.tool_access.block'). Null when no specific rule matched."
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Human-readable explanation of why the decision was reached."
+    },
+    "rule_trace": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RuleEvaluation"
+      },
+      "description": "Ordered trace of every rule block consulted during evaluation. Includes rules that were skipped due to short-circuiting."
+    },
+    "policy": {
+      "$ref": "#/$defs/PolicySummary"
+    },
+    "origin_profile": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "The ID of the origin profile that was selected during evaluation, if any."
+    },
+    "posture": {
+      "oneOf": [
+        { "$ref": "#/$defs/PostureResult" },
+        { "type": "null" }
+      ],
+      "default": null,
+      "description": "Posture state information, including current state and next state after any signal-triggered transition."
+    },
+    "evaluation_duration_us": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Wall-clock evaluation time in microseconds. Excludes receipt construction and serialization time."
+    }
+  },
+  "$defs": {
+    "ActionSummary": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "description": "Summary of the evaluated action. Content is never included directly; only a hash is recorded to prevent accidental logging of sensitive data.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "The action type that was evaluated (e.g., 'tool_call', 'egress', 'file_read')."
+        },
+        "target": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "The target of the action (tool name, URL, file path, etc.). Null when not applicable."
+        },
+        "content_redacted": {
+          "type": "boolean",
+          "default": false,
+          "description": "True when action content was present but omitted from the receipt for privacy."
+        }
+      }
+    },
+    "RuleEvaluation": {
+      "type": "object",
+      "required": ["rule_block", "outcome", "evaluated"],
+      "additionalProperties": false,
+      "description": "Record of a single rule block evaluation during the decision process.",
+      "properties": {
+        "rule_block": {
+          "type": "string",
+          "description": "The rule block that was consulted (e.g., 'rules.forbidden_paths', 'rules.tool_access.block')."
+        },
+        "outcome": {
+          "type": "string",
+          "enum": ["allow", "warn", "deny", "skip"],
+          "description": "The outcome of this rule evaluation. 'skip' indicates the rule was not evaluated (disabled, not applicable, or short-circuited)."
+        },
+        "matched_rule": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "The specific rule path that produced this outcome, if any."
+        },
+        "reason": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Human-readable explanation of why this rule produced this outcome."
+        },
+        "evaluated": {
+          "type": "boolean",
+          "description": "Whether the rule block was actually evaluated. False if the rule was short-circuited by a prior decision or is not applicable to the action type."
+        }
+      }
+    },
+    "PolicySummary": {
+      "type": "object",
+      "required": ["version", "content_hash"],
+      "additionalProperties": false,
+      "description": "Identity and integrity summary of the policy document used during evaluation.",
+      "properties": {
+        "name": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "The name field from the policy document, if present."
+        },
+        "version": {
+          "type": "string",
+          "description": "The hushspec version field from the policy document."
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 hex digest of the canonical JSON serialization of the resolved policy document."
+        }
+      }
+    },
+    "PostureResult": {
+      "type": "object",
+      "required": ["current", "next"],
+      "additionalProperties": false,
+      "description": "Posture state at evaluation time and after any signal-triggered transition.",
+      "properties": {
+        "current": {
+          "type": "string",
+          "description": "The posture state that was active during evaluation."
+        },
+        "next": {
+          "type": "string",
+          "description": "The posture state after any signal-triggered transition. Same as current if no transition occurred."
+        }
+      }
+    }
+  }
+}

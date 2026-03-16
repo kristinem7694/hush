@@ -1,8 +1,9 @@
 package hushspec
 
-// Merge combines a base HushSpec with a child overlay according to the
-// child's merge_strategy. If the child does not specify a strategy,
-// deep_merge is used by default.
+import "slices"
+
+// Merge combines a base HushSpec with a child overlay using the child's
+// merge_strategy (defaults to deep_merge).
 func Merge(base, child *HushSpec) *HushSpec {
 	strategy := child.MergeStrategy
 	if strategy == "" {
@@ -21,8 +22,7 @@ func Merge(base, child *HushSpec) *HushSpec {
 	}
 }
 
-// deepCopySpec creates a deep copy of a HushSpec by round-tripping through
-// YAML serialisation. This guarantees full value isolation.
+// deepCopySpec deep-copies a HushSpec by round-tripping through YAML.
 func deepCopySpec(spec *HushSpec) *HushSpec {
 	if spec == nil {
 		return nil
@@ -75,8 +75,6 @@ func mergeSpecs(base, child *HushSpec, deep bool) *HushSpec {
 	return result
 }
 
-// mergeRules merges child rule blocks into base. Each non-nil child rule
-// block replaces the corresponding base block entirely.
 func mergeRules(base, child *Rules) {
 	if child.ForbiddenPaths != nil {
 		base.ForbiddenPaths = child.ForbiddenPaths
@@ -110,8 +108,6 @@ func mergeRules(base, child *Rules) {
 	}
 }
 
-// mergeExtensionsShallow merges child extension blocks into base. Each non-nil
-// child extension block replaces the corresponding base block entirely.
 func mergeExtensionsShallow(base, child *Extensions) {
 	if child.Posture != nil {
 		base.Posture = child.Posture
@@ -124,7 +120,6 @@ func mergeExtensionsShallow(base, child *Extensions) {
 	}
 }
 
-// mergeExtensionsDeep applies the extension-specific deep-merge rules.
 func mergeExtensionsDeep(base, child *Extensions) {
 	if child.Posture != nil {
 		base.Posture = mergePosture(base.Posture, child.Posture)
@@ -168,7 +163,7 @@ func mergeOrigins(base, child *OriginsExtension) *OriginsExtension {
 		return child
 	}
 
-	mergedProfiles := append([]OriginProfile{}, base.Profiles...)
+	mergedProfiles := slices.Clone(base.Profiles)
 	for _, childProfile := range child.Profiles {
 		found := false
 		for i, existing := range mergedProfiles {
@@ -184,7 +179,7 @@ func mergeOrigins(base, child *OriginsExtension) *OriginsExtension {
 	}
 
 	return &OriginsExtension{
-		DefaultBehavior: firstOriginDefaultBehavior(child.DefaultBehavior, base.DefaultBehavior),
+		DefaultBehavior: firstNonNil(child.DefaultBehavior, base.DefaultBehavior),
 		Profiles:        mergedProfiles,
 	}
 }
@@ -213,10 +208,10 @@ func mergePromptInjection(base, child *PromptInjectionDetection) *PromptInjectio
 	}
 
 	return &PromptInjectionDetection{
-		Enabled:        firstBool(child.Enabled, base.Enabled),
-		WarnAtOrAbove:  firstDetectionLevel(child.WarnAtOrAbove, base.WarnAtOrAbove),
-		BlockAtOrAbove: firstDetectionLevel(child.BlockAtOrAbove, base.BlockAtOrAbove),
-		MaxScanBytes:   firstInt(child.MaxScanBytes, base.MaxScanBytes),
+		Enabled:        firstNonNil(child.Enabled, base.Enabled),
+		WarnAtOrAbove:  firstNonNil(child.WarnAtOrAbove, base.WarnAtOrAbove),
+		BlockAtOrAbove: firstNonNil(child.BlockAtOrAbove, base.BlockAtOrAbove),
+		MaxScanBytes:   firstNonNil(child.MaxScanBytes, base.MaxScanBytes),
 	}
 }
 
@@ -229,10 +224,10 @@ func mergeJailbreak(base, child *JailbreakDetection) *JailbreakDetection {
 	}
 
 	return &JailbreakDetection{
-		Enabled:        firstBool(child.Enabled, base.Enabled),
-		BlockThreshold: firstInt(child.BlockThreshold, base.BlockThreshold),
-		WarnThreshold:  firstInt(child.WarnThreshold, base.WarnThreshold),
-		MaxInputBytes:  firstInt(child.MaxInputBytes, base.MaxInputBytes),
+		Enabled:        firstNonNil(child.Enabled, base.Enabled),
+		BlockThreshold: firstNonNil(child.BlockThreshold, base.BlockThreshold),
+		WarnThreshold:  firstNonNil(child.WarnThreshold, base.WarnThreshold),
+		MaxInputBytes:  firstNonNil(child.MaxInputBytes, base.MaxInputBytes),
 	}
 }
 
@@ -245,49 +240,14 @@ func mergeThreatIntel(base, child *ThreatIntelDetection) *ThreatIntelDetection {
 	}
 
 	return &ThreatIntelDetection{
-		Enabled:             firstBool(child.Enabled, base.Enabled),
-		PatternDB:           firstString(child.PatternDB, base.PatternDB),
-		SimilarityThreshold: firstFloat64(child.SimilarityThreshold, base.SimilarityThreshold),
-		TopK:                firstInt(child.TopK, base.TopK),
+		Enabled:             firstNonNil(child.Enabled, base.Enabled),
+		PatternDB:           firstNonNil(child.PatternDB, base.PatternDB),
+		SimilarityThreshold: firstNonNil(child.SimilarityThreshold, base.SimilarityThreshold),
+		TopK:                firstNonNil(child.TopK, base.TopK),
 	}
 }
 
-func firstBool(primary, fallback *bool) *bool {
-	if primary != nil {
-		return primary
-	}
-	return fallback
-}
-
-func firstInt(primary, fallback *int) *int {
-	if primary != nil {
-		return primary
-	}
-	return fallback
-}
-
-func firstFloat64(primary, fallback *float64) *float64 {
-	if primary != nil {
-		return primary
-	}
-	return fallback
-}
-
-func firstString(primary, fallback *string) *string {
-	if primary != nil {
-		return primary
-	}
-	return fallback
-}
-
-func firstDetectionLevel(primary, fallback *DetectionLevel) *DetectionLevel {
-	if primary != nil {
-		return primary
-	}
-	return fallback
-}
-
-func firstOriginDefaultBehavior(primary, fallback *OriginDefaultBehavior) *OriginDefaultBehavior {
+func firstNonNil[T any](primary, fallback *T) *T {
 	if primary != nil {
 		return primary
 	}

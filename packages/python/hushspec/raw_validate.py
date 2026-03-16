@@ -6,6 +6,7 @@ from typing import Any, Callable
 from hushspec.generated_contract import (
     BRIDGE_POLICY_KEYS,
     BRIDGE_TARGET_KEYS,
+    CLASSIFICATIONS,
     COMPUTER_USE_KEYS,
     COMPUTER_USE_MODES,
     DEFAULT_ACTIONS,
@@ -14,8 +15,10 @@ from hushspec.generated_contract import (
     EGRESS_KEYS,
     EXTENSION_KEYS,
     FORBIDDEN_PATH_KEYS,
+    GOVERNANCE_METADATA_KEYS,
     INPUT_INJECTION_KEYS,
     JAILBREAK_KEYS,
+    LIFECYCLE_STATES,
     ORIGINS_KEYS,
     ORIGIN_BUDGET_KEYS,
     ORIGIN_DATA_KEYS,
@@ -77,6 +80,12 @@ def _validate_top_level(obj: dict[str, Any], errors: list[str]) -> None:
             errors.append("extensions must be an object")
         else:
             _validate_extensions(obj["extensions"], errors)
+
+    if "metadata" in obj:
+        if not isinstance(obj["metadata"], dict):
+            errors.append("metadata must be an object")
+        else:
+            _validate_governance_metadata(obj["metadata"], errors)
 
 
 def _validate_rules(obj: dict[str, Any], errors: list[str]) -> None:
@@ -219,6 +228,20 @@ def _validate_input_injection(obj: dict[str, Any], errors: list[str], path: str)
     _validate_optional_bool(
         obj, "require_postcondition_probe", errors, f"{path}.require_postcondition_probe"
     )
+
+
+def _validate_governance_metadata(obj: dict[str, Any], errors: list[str]) -> None:
+    path = "metadata"
+    _reject_unknown_keys(obj, GOVERNANCE_METADATA_KEYS, errors, path)
+    _validate_optional_string(obj, "author", errors, f"{path}.author")
+    _validate_optional_string(obj, "approved_by", errors, f"{path}.approved_by")
+    _validate_optional_string(obj, "approval_date", errors, f"{path}.approval_date")
+    _validate_optional_enum(obj, "classification", errors, f"{path}.classification", CLASSIFICATIONS)
+    _validate_optional_string(obj, "change_ticket", errors, f"{path}.change_ticket")
+    _validate_optional_enum(obj, "lifecycle_state", errors, f"{path}.lifecycle_state", LIFECYCLE_STATES)
+    _validate_optional_int(obj, "policy_version", errors, f"{path}.policy_version", min_value=1)
+    _validate_optional_string(obj, "effective_date", errors, f"{path}.effective_date")
+    _validate_optional_string(obj, "expiry_date", errors, f"{path}.expiry_date")
 
 
 def _validate_extensions(obj: dict[str, Any], errors: list[str]) -> None:
@@ -483,25 +506,13 @@ def _validate_detection(obj: dict[str, Any], errors: list[str], path: str) -> No
     _reject_unknown_keys(obj, DETECTION_KEYS, errors, path)
 
     _validate_optional_object(
-        obj,
-        "prompt_injection",
-        errors,
-        path,
-        lambda section, errs, section_path: _validate_detection_prompt(section, errs, section_path),
+        obj, "prompt_injection", errors, path, _validate_detection_prompt,
     )
     _validate_optional_object(
-        obj,
-        "jailbreak",
-        errors,
-        path,
-        lambda section, errs, section_path: _validate_detection_jailbreak(section, errs, section_path),
+        obj, "jailbreak", errors, path, _validate_detection_jailbreak,
     )
     _validate_optional_object(
-        obj,
-        "threat_intel",
-        errors,
-        path,
-        lambda section, errs, section_path: _validate_detection_threat_intel(section, errs, section_path),
+        obj, "threat_intel", errors, path, _validate_detection_threat_intel,
     )
 
 
@@ -709,17 +720,31 @@ def _validate_number_value(
     return value
 
 
+# Pattern that detects regex features outside the RE2 subset.
+# See hushspec/validate.py for full documentation.
+_RE2_DISALLOWED = re.compile(
+    r"\\[1-9]|\\k<|\(\?[=!]|\(\?<[=!]|\(\?>|\*\+|\+\+|\?\+|\(\?\(|\(\?R\)|\(\?\d+\)|\(\?P=|\\g<"
+)
+
+
 def _validate_regex(pattern: str, errors: list[str], path: str) -> None:
     try:
         re.compile(pattern)
     except re.error as exc:
         errors.append(f"{path} must be a valid regular expression: {exc}")
+        return
+
+    if _RE2_DISALLOWED.search(pattern):
+        errors.append(
+            f"{path}: pattern uses features not in the RE2 subset "
+            "(backreferences, lookaround, etc.) which may cause ReDoS"
+        )
 
 
 def _reject_unknown_keys(
     obj: dict[str, Any], allowed: frozenset[str] | set[str], errors: list[str], path: str
 ) -> None:
-    for key in obj.keys():
+    for key in obj:
         if not isinstance(key, str):
             errors.append(f"{path} contains a non-string field name")
             continue

@@ -1,4 +1,5 @@
 use crate::HushSpec;
+use crate::conditions::{Condition, RuntimeContext, evaluate_condition};
 use crate::extensions::{OriginProfile, PostureExtension, TransitionTrigger};
 use crate::rules::{
     ComputerUseMode, ComputerUseRule, DefaultAction, EgressRule, ForbiddenPathsRule,
@@ -6,8 +7,8 @@ use crate::rules::{
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-/// Decision returned by the reference evaluator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Decision {
@@ -16,7 +17,6 @@ pub enum Decision {
     Deny,
 }
 
-/// Action context evaluated against a resolved HushSpec document.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvaluationAction {
@@ -34,7 +34,6 @@ pub struct EvaluationAction {
     pub args_size: Option<usize>,
 }
 
-/// Origin metadata supplied with an action.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OriginContext {
@@ -58,7 +57,6 @@ pub struct OriginContext {
     pub actor_role: Option<String>,
 }
 
-/// Posture metadata supplied with an action.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostureContext {
@@ -68,7 +66,6 @@ pub struct PostureContext {
     pub signal: Option<String>,
 }
 
-/// Structured result from the reference evaluator.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvaluationResult {
@@ -83,7 +80,6 @@ pub struct EvaluationResult {
     pub posture: Option<PostureResult>,
 }
 
-/// Posture state information attached to an evaluation result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostureResult {
@@ -92,6 +88,16 @@ pub struct PostureResult {
 }
 
 pub fn evaluate(spec: &HushSpec, action: &EvaluationAction) -> EvaluationResult {
+    if crate::panic::is_panic_active() {
+        return EvaluationResult {
+            decision: Decision::Deny,
+            matched_rule: Some("__hushspec_panic__".to_string()),
+            reason: Some("emergency panic mode is active".to_string()),
+            origin_profile: None,
+            posture: None,
+        };
+    }
+
     let matched_profile = select_origin_profile(spec, action.origin.as_ref());
     let origin_profile_id = matched_profile.map(|profile| profile.id.clone());
     let posture = resolve_posture(spec, matched_profile, action.posture.as_ref());
@@ -126,6 +132,122 @@ pub fn evaluate(spec: &HushSpec, action: &EvaluationAction) -> EvaluationResult 
     }
 }
 
+/// Like [`evaluate`] but filters rule blocks through `when` conditions first.
+///
+/// Rule blocks whose conditions evaluate to false are treated as inert.
+/// Rule blocks not present in the conditions map are unconditionally active.
+pub fn evaluate_with_context(
+    spec: &HushSpec,
+    action: &EvaluationAction,
+    context: &RuntimeContext,
+    conditions: &HashMap<String, Condition>,
+) -> EvaluationResult {
+    if crate::panic::is_panic_active() {
+        return EvaluationResult {
+            decision: Decision::Deny,
+            matched_rule: Some("__hushspec_panic__".to_string()),
+            reason: Some("emergency panic mode is active".to_string()),
+            origin_profile: None,
+            posture: None,
+        };
+    }
+
+    let matched_profile = select_origin_profile(spec, action.origin.as_ref());
+    let origin_profile_id = matched_profile.map(|profile| profile.id.clone());
+    let posture = resolve_posture(spec, matched_profile, action.posture.as_ref());
+
+    if let Some(denied) = posture_capability_guard(action, &posture, spec, &origin_profile_id) {
+        return denied;
+    }
+
+    let effective_spec = apply_conditions(spec, context, conditions);
+
+    match action.action_type.as_str() {
+        "tool_call" => evaluate_tool_call(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "egress" => evaluate_egress(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "file_read" => evaluate_file_read(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "file_write" => evaluate_file_write(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "patch_apply" => evaluate_patch(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "shell_command" => evaluate_shell_command(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "computer_use" => {
+            evaluate_computer_use(&effective_spec, action, posture, origin_profile_id)
+        }
+        _ => EvaluationResult {
+            decision: Decision::Allow,
+            matched_rule: None,
+            reason: Some("no reference evaluator rule for this action type".to_string()),
+            origin_profile: origin_profile_id,
+            posture,
+        },
+    }
+}
+
+fn apply_conditions(
+    spec: &HushSpec,
+    context: &RuntimeContext,
+    conditions: &HashMap<String, Condition>,
+) -> HushSpec {
+    let mut effective = spec.clone();
+
+    if let Some(rules) = &mut effective.rules {
+        for (block_name, condition) in conditions {
+            if !evaluate_condition(condition, context) {
+                match block_name.as_str() {
+                    "forbidden_paths" => rules.forbidden_paths = None,
+                    "path_allowlist" => rules.path_allowlist = None,
+                    "egress" => rules.egress = None,
+                    "secret_patterns" => rules.secret_patterns = None,
+                    "patch_integrity" => rules.patch_integrity = None,
+                    "shell_commands" => rules.shell_commands = None,
+                    "tool_access" => rules.tool_access = None,
+                    "computer_use" => rules.computer_use = None,
+                    "remote_desktop_channels" => rules.remote_desktop_channels = None,
+                    "input_injection" => rules.input_injection = None,
+                    _ => {} // Unknown block name -- ignore silently.
+                }
+            }
+        }
+    }
+
+    effective
+}
+
 fn evaluate_tool_call(
     spec: &HushSpec,
     action: &EvaluationAction,
@@ -150,10 +272,7 @@ fn evaluate_tool_call(
                     .map(|rule| (rule, "rules.tool_access".to_string()))
             })
         });
-    let (rule, prefix) = match selected {
-        Some((rule, prefix)) => (Some(rule), Some(prefix)),
-        None => (None, None),
-    };
+    let (rule, prefix) = selected.unzip();
 
     evaluate_tool_access_rule(
         rule,
@@ -187,15 +306,11 @@ fn evaluate_egress(
                     .map(|rule| (rule, "rules.egress".to_string()))
             })
         });
-    let (rule, prefix) = match selected {
-        Some((rule, prefix)) => (Some(rule), Some(prefix)),
-        None => (None, None),
-    };
 
-    match rule {
-        Some(rule) => evaluate_egress_rule(
+    match selected {
+        Some((rule, prefix)) => evaluate_egress_rule(
             rule,
-            prefix.as_deref().unwrap_or("rules.egress"),
+            &prefix,
             action.target.as_deref().unwrap_or_default(),
             posture,
             origin_profile_id,
@@ -618,20 +733,18 @@ fn evaluate_path_guards(
 ) -> Option<EvaluationResult> {
     let rules = spec.rules.as_ref()?;
 
-    if let Some(rule) = rules.forbidden_paths.as_ref() {
-        if let Some(result) =
+    if let Some(rule) = rules.forbidden_paths.as_ref()
+        && let Some(result) =
             evaluate_forbidden_paths(rule, target, posture.clone(), origin_profile_id.clone())
-        {
-            return Some(result);
-        }
+    {
+        return Some(result);
     }
 
-    if let Some(rule) = rules.path_allowlist.as_ref() {
-        if let Some(result) =
+    if let Some(rule) = rules.path_allowlist.as_ref()
+        && let Some(result) =
             evaluate_path_allowlist(rule, target, operation, posture, origin_profile_id)
-        {
-            return Some(result);
-        }
+    {
+        return Some(result);
     }
 
     None
@@ -723,9 +836,7 @@ fn posture_capability_guard(
         .and_then(|extensions| extensions.posture.as_ref())?;
     let current_state = posture_extension.states.get(&posture_result.current)?;
 
-    let Some(capability) = required_capability(action.action_type.as_str()) else {
-        return None;
-    };
+    let capability = required_capability(action.action_type.as_str())?;
 
     if current_state
         .capabilities

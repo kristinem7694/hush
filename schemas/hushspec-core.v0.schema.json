@@ -13,12 +13,10 @@
       "description": "HushSpec version. Must match ^0\\. for v0.x documents."
     },
     "name": {
-      "type": "string",
-      "description": "Human-readable policy name."
+      "type": "string"
     },
     "description": {
-      "type": "string",
-      "description": "Policy description."
+      "type": "string"
     },
     "extends": {
       "type": "string",
@@ -35,6 +33,9 @@
     },
     "extensions": {
       "$ref": "#/$defs/Extensions"
+    },
+    "metadata": {
+      "$ref": "#/$defs/GovernanceMetadata"
     }
   },
   "$defs": {
@@ -435,6 +436,52 @@
         "detection": {
           "type": "object",
           "description": "Detection engine thresholds and configuration. Schema defined in companion specification."
+        }
+      }
+    },
+    "GovernanceMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional governance metadata for enterprise policy lifecycle management. Has no impact on evaluation.",
+      "properties": {
+        "author": {
+          "type": "string",
+          "description": "Identity of the policy author (e.g., email, team name)."
+        },
+        "approved_by": {
+          "type": "string",
+          "description": "Identity of the policy approver."
+        },
+        "approval_date": {
+          "type": "string",
+          "description": "ISO 8601 date when the policy was approved."
+        },
+        "classification": {
+          "type": "string",
+          "enum": ["public", "internal", "confidential", "restricted"],
+          "description": "Data classification level of the policy."
+        },
+        "change_ticket": {
+          "type": "string",
+          "description": "Change management reference (e.g., JIRA ticket, ServiceNow ID)."
+        },
+        "lifecycle_state": {
+          "type": "string",
+          "enum": ["draft", "review", "approved", "deployed", "deprecated", "archived"],
+          "description": "Current lifecycle state of the policy."
+        },
+        "policy_version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonically increasing policy version counter."
+        },
+        "effective_date": {
+          "type": "string",
+          "description": "ISO 8601 date when the policy becomes effective."
+        },
+        "expiry_date": {
+          "type": "string",
+          "description": "ISO 8601 date when the policy expires."
         }
       }
     }

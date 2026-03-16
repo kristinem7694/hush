@@ -1,0 +1,198 @@
+from pathlib import Path
+
+from hushspec import is_safe_regex, parse, parse_or_raise, validate
+
+
+
+# is_safe_regex unit tests
+
+
+
+class TestIsSafeRegex:
+    def test_accepts_simple_character_class(self):
+        assert is_safe_regex("AKIA[0-9A-Z]{16}") is True
+
+    def test_accepts_case_insensitive_flag(self):
+        assert is_safe_regex("(?i)disable[\\s_\\-]?(security|auth)") is True
+
+    def test_accepts_dot_star_with_literal(self):
+        assert is_safe_regex("curl.*\\|.*bash") is True
+
+    def test_accepts_non_capturing_group(self):
+        assert is_safe_regex("(?:key|token)\\s*[:=]\\s*[A-Za-z0-9]{32,}") is True
+
+    def test_accepts_named_group(self):
+        assert is_safe_regex("(?P<name>[a-z]+)") is True
+
+    def test_accepts_anchors_and_word_boundaries(self):
+        assert is_safe_regex("^\\bfoo\\b$") is True
+
+    def test_rejects_backreference_1(self):
+        assert is_safe_regex("(a)\\1") is False
+
+    def test_rejects_backreference_2(self):
+        assert is_safe_regex("(a)(b)\\2") is False
+
+    def test_rejects_named_backreference_k(self):
+        assert is_safe_regex("(?P<word>\\w+)\\k<word>") is False
+
+    def test_rejects_positive_lookahead(self):
+        assert is_safe_regex("foo(?=bar)") is False
+
+    def test_rejects_negative_lookahead(self):
+        assert is_safe_regex("foo(?!bar)") is False
+
+    def test_rejects_positive_lookbehind(self):
+        assert is_safe_regex("(?<=password:)\\s*\\S+") is False
+
+    def test_rejects_negative_lookbehind(self):
+        assert is_safe_regex("(?<!\\d)\\d{3}") is False
+
+    def test_rejects_atomic_group(self):
+        assert is_safe_regex("(?>abc)") is False
+
+    def test_rejects_possessive_star(self):
+        assert is_safe_regex("a*+") is False
+
+    def test_rejects_possessive_plus(self):
+        assert is_safe_regex("a++") is False
+
+    def test_rejects_possessive_question(self):
+        assert is_safe_regex("a?+") is False
+
+    def test_rejects_conditional_pattern(self):
+        assert is_safe_regex("(?(1)yes|no)") is False
+
+    def test_rejects_named_backreference_P_equals(self):
+        assert is_safe_regex("(?P<word>\\w+)(?P=word)") is False
+
+    def test_rejects_subroutine_call(self):
+        assert is_safe_regex("\\g<name>") is False
+
+
+
+# Regex validation in parse/validate pipeline
+
+
+
+class TestRegexSafetyInValidation:
+    def test_accepts_valid_re2_pattern(self):
+        yaml = """
+hushspec: "0.1.0"
+rules:
+  secret_patterns:
+    patterns:
+      - name: aws_key
+        pattern: "AKIA[0-9A-Z]{16}"
+        severity: critical
+"""
+        ok, spec = parse(yaml)
+        assert ok is True
+
+    def test_rejects_invalid_regex_syntax(self):
+        yaml = """
+hushspec: "0.1.0"
+rules:
+  secret_patterns:
+    patterns:
+      - name: bad
+        pattern: "["
+        severity: critical
+"""
+        ok, err = parse(yaml)
+        assert ok is False
+        assert "valid regular expression" in err
+
+    def test_rejects_backreference_in_secret_patterns(self):
+        yaml = """
+hushspec: "0.1.0"
+rules:
+  secret_patterns:
+    patterns:
+      - name: backref
+        pattern: "(a)\\\\1"
+        severity: critical
+"""
+        ok, err = parse(yaml)
+        assert ok is False
+        assert "RE2" in err
+
+    def test_rejects_lookahead_in_shell_commands(self):
+        yaml = """
+hushspec: "0.1.0"
+rules:
+  shell_commands:
+    forbidden_patterns:
+      - "(?=foo)bar"
+"""
+        ok, err = parse(yaml)
+        assert ok is False
+        assert "RE2" in err
+
+    def test_rejects_lookbehind_in_patch_integrity(self):
+        yaml = """
+hushspec: "0.1.0"
+rules:
+  patch_integrity:
+    max_imbalance_ratio: 10.0
+    forbidden_patterns:
+      - "(?<=password:)\\\\s*\\\\S+"
+"""
+        ok, err = parse(yaml)
+        assert ok is False
+        assert "RE2" in err
+
+    def test_accepts_all_valid_regex_fields(self):
+        yaml = """
+hushspec: "0.1.0"
+rules:
+  secret_patterns:
+    patterns:
+      - name: aws_key
+        pattern: "AKIA[0-9A-Z]{16}"
+        severity: critical
+      - name: private_key
+        pattern: "-----BEGIN\\\\s+(RSA\\\\s+)?PRIVATE\\\\s+KEY-----"
+        severity: critical
+  shell_commands:
+    forbidden_patterns:
+      - "(?i)rm\\\\s+-rf\\\\s+/"
+      - "curl.*\\\\|.*bash"
+  patch_integrity:
+    max_imbalance_ratio: 10.0
+    forbidden_patterns:
+      - "(?i)disable[\\\\s_\\\\-]?(security|auth|ssl|tls)"
+      - "(?i)chmod\\\\s+777"
+"""
+        ok, spec = parse(yaml)
+        assert ok is True
+
+
+
+# Built-in rulesets must pass regex validation
+
+
+
+class TestBuiltInRulesets:
+    RULESETS_DIR = Path(__file__).parent.parent.parent.parent / "rulesets"
+    RULESET_FILES = [
+        "default.yaml",
+        "strict.yaml",
+        "permissive.yaml",
+        "ai-agent.yaml",
+        "cicd.yaml",
+        "remote-desktop.yaml",
+    ]
+
+    def test_all_rulesets_have_valid_patterns(self):
+        for filename in self.RULESET_FILES:
+            path = self.RULESETS_DIR / filename
+            yaml_content = path.read_text()
+            ok, result = parse(yaml_content)
+            assert ok is True, f"{filename} failed to parse: {result}"
+            spec = result
+            validation = validate(spec)
+            assert validation.is_valid, (
+                f"{filename} failed validation: "
+                + "; ".join(str(e) for e in validation.errors)
+            )

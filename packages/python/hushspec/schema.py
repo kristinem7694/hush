@@ -1,5 +1,15 @@
-"""Generated HushSpec schema exports."""
+from hushspec.generated_models import (
+    Classification,
+    GovernanceMetadata,
+    HushSpec,
+    LifecycleState,
+    MergeStrategy,
+)
 
-from hushspec.generated_models import HushSpec, MergeStrategy
-
-__all__ = ["HushSpec", "MergeStrategy"]
+__all__ = [
+    "Classification",
+    "GovernanceMetadata",
+    "HushSpec",
+    "LifecycleState",
+    "MergeStrategy",
+]

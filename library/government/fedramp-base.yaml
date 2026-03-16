@@ -1,0 +1,180 @@
+# Compliance: NIST SP 800-53 Rev 5 (AC, AU, CM, SC)
+#
+# DISCLAIMER: Starting point only. Engage a 3PAO and customize for your
+# system security plan (SSP) before production use.
+hushspec: "0.1.0"
+name: fedramp-base
+description: >
+  FedRAMP-aligned policy (NIST 800-53 Rev 5). Restricts egress to .gov/.mil
+  domains, blocks CUI paths, and enforces minimal tool access.
+extends: "builtin:strict"
+
+rules:
+  # --- AC-3: Access Enforcement ---
+  forbidden_paths:
+    patterns:
+      # Controlled Unclassified Information (CUI)
+      - "**/cui/**"
+      - "**/controlled/**"
+      - "**/fouo/**"
+      - "**/sensitive-but-unclassified/**"
+      # Classified data paths
+      - "**/classified/**"
+      - "**/secret/**"
+      - "**/top-secret/**"
+      - "**/sci/**"
+      # Government system configuration
+      - "**/stig/**"
+      - "**/scap/**"
+      # Standard credential stores -- AC-3
+      - "**/.ssh/**"
+      - "**/.aws/**"
+      - "**/.env"
+      - "**/.env.*"
+      - "**/.git-credentials"
+      - "**/.gnupg/**"
+      - "**/.kube/**"
+      - "**/.docker/**"
+      - "**/.npmrc"
+      - "**/.password-store/**"
+      - "**/.1password/**"
+      - "/etc/shadow"
+      - "/etc/passwd"
+      - "/etc/sudoers"
+      # Audit logs -- AU-9
+      - "**/audit-logs/**"
+      - "**/security-logs/**"
+      - "**/var/log/audit/**"
+      # PKI and certificates
+      - "**/pki/**"
+      - "**/certificates/**"
+      - "**/ca-certs/**"
+    exceptions:
+      - "**/.env.example"
+      - "**/.env.template"
+
+  # --- SC-7: Boundary Protection ---
+  egress:
+    allow:
+      # Government domains
+      - "*.gov"
+      - "*.mil"
+      # FedRAMP-authorized cloud services
+      - "*.amazonaws.com"
+      - "*.azure.com"
+      - "*.azure.net"
+      - "*.googleapis.com"
+      # Package registries (for build/deploy)
+      - "registry.npmjs.org"
+      - "pypi.org"
+      - "files.pythonhosted.org"
+      - "crates.io"
+      - "static.crates.io"
+    block:
+      # SC-7 -- non-government data sharing
+      - "*.pastebin.com"
+      - "*.transfer.sh"
+      - "*.file.io"
+      - "*.wetransfer.com"
+      # Consumer storage
+      - "*.dropbox.com"
+      - "drive.google.com"
+      - "*.onedrive.live.com"
+      # Social media
+      - "*.twitter.com"
+      - "*.x.com"
+      - "*.facebook.com"
+      - "*.reddit.com"
+      # Foreign cloud services
+      - "*.aliyuncs.com"
+      - "*.tencentcloud.com"
+      - "*.yandex.cloud"
+    default: block
+
+  # --- AC-3, SC-28: Credentials and CUI markers ---
+  secret_patterns:
+    patterns:
+      - name: aws_access_key
+        pattern: "AKIA[0-9A-Z]{16}"
+        severity: critical
+        description: "AWS access key -- AC-3 credential control"
+      - name: private_key
+        pattern: "-----BEGIN\\s+(RSA\\s+)?PRIVATE\\s+KEY-----"
+        severity: critical
+        description: "Private key -- SC-28 protection of information at rest"
+      - name: piv_card_pattern
+        pattern: "(?i)(piv|cac)[\\s_-]?(card|cert|credential)\\s*[:=]\\s*[A-Za-z0-9]+"
+        severity: critical
+        description: "PIV/CAC credential reference -- AC-3"
+      - name: generic_api_key
+        pattern: "(?i)(api[_\\-]?key|apikey)\\s*[:=]\\s*[A-Za-z0-9]{32,}"
+        severity: error
+        description: "API key -- AC-3 credential control"
+      - name: ssn
+        pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+        severity: critical
+        description: "Social Security Number -- CUI PII"
+      - name: cui_marking
+        pattern: "(?i)(CUI|CONTROLLED|FOUO|NOFORN|ORCON|REL\\s+TO)"
+        severity: error
+        description: "CUI marking detected in content -- requires handling per 32 CFR 2002"
+      - name: connection_string
+        pattern: "(?i)(postgres|mysql|mongodb|redis)://[^\\s\"']{10,}"
+        severity: critical
+        description: "Database connection string -- AC-3"
+      - name: github_token
+        pattern: "gh[ps]_[A-Za-z0-9]{36}"
+        severity: critical
+    skip_paths:
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/fixtures/**"
+
+  # --- CM-3: Configuration Change Control ---
+  patch_integrity:
+    max_additions: 300
+    max_deletions: 150
+    require_balance: true
+    max_imbalance_ratio: 3.0
+    forbidden_patterns:
+      - "(?i)disable[\\s_\\-]?(security|auth|ssl|tls|fips|audit)"
+      - "(?i)skip[\\s_\\-]?(verify|validation|check)"
+      - "(?i)rm\\s+-rf\\s+/"
+      - "(?i)chmod\\s+777"
+      - "(?i)(cui|classified|fouo|noforn)"
+
+  # --- CM-7: Least Functionality ---
+  shell_commands:
+    forbidden_patterns:
+      - "(?i)rm\\s+-rf\\s+/"
+      - "curl.*\\|.*sh"
+      - "wget.*\\|.*bash"
+      - "(?i)scp\\s"
+      - "(?i)nc\\s+-"
+      - "(?i)base64.*\\|.*curl"
+      - "(?i)chmod\\s+777"
+
+  # --- AC-6: Least Privilege ---
+  tool_access:
+    allow:
+      - read_file
+      - list_directory
+      - search
+      - grep
+    block:
+      - shell_exec
+      - run_command
+      - deploy
+      - deploy_production
+      - raw_file_write
+      - raw_file_delete
+      - database_query
+      - database_write
+    require_confirmation:
+      - write_file
+      - file_write
+      - file_delete
+      - git_push
+      - run_tests
+    default: block
+    max_args_size: 262144
