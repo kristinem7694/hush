@@ -1,0 +1,192 @@
+# Compliance: AICPA Trust Services Criteria (SOC2 Type II)
+# Maps to: CC6.1, CC6.3, CC7.1, CC7.2, CC8.1
+#
+# DISCLAIMER: Starting point only. Customize for your control environment
+# and engage your auditor before production use.
+hushspec: "0.1.0"
+name: soc2-base
+description: >
+  SOC2-aligned policy. Enforces access controls, change management, and
+  transmission security for AI agents in SOC2-audited environments.
+extends: "builtin:strict"
+
+rules:
+  # --- CC6.1, CC6.3: Logical Access Controls ---
+  forbidden_paths:
+    patterns:
+      # Infrastructure credentials -- CC6.1
+      - "**/.ssh/**"
+      - "**/.aws/**"
+      - "**/.gcp/**"
+      - "**/.azure/**"
+      - "**/.env"
+      - "**/.env.*"
+      - "**/.git-credentials"
+      - "**/.gnupg/**"
+      - "**/.kube/**"
+      - "**/.docker/**"
+      - "**/.npmrc"
+      - "**/.password-store/**"
+      - "**/.1password/**"
+      - "/etc/shadow"
+      - "/etc/passwd"
+      - "/etc/sudoers"
+      # Infrastructure state -- CC6.1
+      - "**/terraform.tfstate*"
+      - "**/.terraform/**"
+      - "**/pulumi.*.yaml"
+      - "**/ansible/vault/**"
+      # Customer data directories -- CC6.3
+      - "**/customer-data/**"
+      - "**/customer_data/**"
+      - "**/user-data/**"
+      - "**/user_data/**"
+      - "**/pii/**"
+      - "**/exports/**"
+      # Production configuration -- CC6.3
+      - "**/production.yml"
+      - "**/production.yaml"
+      - "**/prod.env"
+      - "**/prod.config.*"
+      # Audit logs -- CC7.2
+      - "**/audit-logs/**"
+      - "**/compliance-reports/**"
+      # Database files -- CC6.3
+      - "**/*.sqlite"
+      - "**/*.db"
+      - "**/*.mdb"
+    exceptions:
+      - "**/.env.example"
+      - "**/.env.template"
+
+  # --- CC6.1: Transmission Security ---
+  egress:
+    allow:
+      # Code hosting
+      - "api.github.com"
+      - "github.com"
+      - "*.githubusercontent.com"
+      # Package registries
+      - "registry.npmjs.org"
+      - "*.npmjs.org"
+      - "pypi.org"
+      - "files.pythonhosted.org"
+      - "crates.io"
+      - "static.crates.io"
+      # Approved monitoring / observability -- CC7.2
+      - "*.datadoghq.com"
+      - "*.pagerduty.com"
+      - "*.opsgenie.com"
+    block:
+      # CC6.1 -- data sharing platforms
+      - "*.pastebin.com"
+      - "*.transfer.sh"
+      - "*.file.io"
+      - "*.wetransfer.com"
+      # CC6.1 -- consumer cloud storage
+      - "*.dropbox.com"
+      - "drive.google.com"
+      - "*.onedrive.live.com"
+      # CC6.1 -- social media
+      - "*.twitter.com"
+      - "*.x.com"
+      - "*.facebook.com"
+      - "*.reddit.com"
+    default: block
+
+  # --- CC6.1, CC7.1: Secret Detection ---
+  secret_patterns:
+    patterns:
+      - name: aws_access_key
+        pattern: "AKIA[0-9A-Z]{16}"
+        severity: critical
+        description: "AWS access key -- CC6.1 access control violation"
+      - name: aws_secret_key
+        pattern: "(?i)aws_secret_access_key\\s*[:=]\\s*[A-Za-z0-9/+=]{40}"
+        severity: critical
+        description: "AWS secret key -- CC6.1 access control violation"
+      - name: github_token
+        pattern: "gh[ps]_[A-Za-z0-9]{36}"
+        severity: critical
+        description: "GitHub token -- CC6.1 credential exposure"
+      - name: private_key
+        pattern: "-----BEGIN\\s+(RSA\\s+)?PRIVATE\\s+KEY-----"
+        severity: critical
+        description: "Private key material -- CC6.1 cryptographic key exposure"
+      - name: generic_api_key
+        pattern: "(?i)(api[_\\-]?key|apikey)\\s*[:=]\\s*[A-Za-z0-9]{32,}"
+        severity: error
+        description: "API key pattern -- CC6.1 credential exposure"
+      - name: connection_string
+        pattern: "(?i)(postgres|mysql|mongodb|redis|amqp)://[^\\s\"']{10,}"
+        severity: critical
+        description: "Database connection string -- CC6.1/CC6.3 data access"
+      - name: jwt_token
+        pattern: "eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]+"
+        severity: error
+        description: "JWT token -- CC6.1 session credential"
+      - name: slack_token
+        pattern: "xox[baprs]-[0-9]{10,13}-[0-9]{10,13}[a-zA-Z0-9-]*"
+        severity: critical
+        description: "Slack token -- CC6.1 credential exposure"
+      - name: ssn
+        pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b"
+        severity: critical
+        description: "Social Security Number -- CC6.3 PII exposure"
+      - name: email_pii
+        pattern: "(?i)(customer|user|client)[_\\-]?email\\s*[:=]\\s*[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"
+        severity: error
+        description: "Customer email in code -- CC6.3 PII exposure"
+    skip_paths:
+      - "**/test/**"
+      - "**/tests/**"
+      - "**/fixtures/**"
+      - "**/*.test.*"
+
+  # --- CC8.1: Change Management ---
+  patch_integrity:
+    max_additions: 500
+    max_deletions: 200
+    require_balance: true
+    max_imbalance_ratio: 5.0
+    forbidden_patterns:
+      - "(?i)disable[\\s_\\-]?(security|auth|ssl|tls|audit|logging|monitoring)"
+      - "(?i)skip[\\s_\\-]?(verify|validation|check|audit|test)"
+      - "(?i)rm\\s+-rf\\s+/"
+      - "(?i)chmod\\s+777"
+      - "(?i)eval\\s*\\("
+      - "(?i)exec\\s*\\("
+
+  # --- CC7.1: Shell commands ---
+  shell_commands:
+    forbidden_patterns:
+      - "(?i)rm\\s+-rf\\s+/"
+      - "curl.*\\|.*sh"
+      - "wget.*\\|.*bash"
+      - "(?i)chmod\\s+777"
+
+  # --- CC6.3: Tool Access ---
+  tool_access:
+    allow:
+      - read_file
+      - write_file
+      - list_directory
+      - search
+      - grep
+      - run_tests
+      - build
+    block:
+      - shell_exec
+      - run_command
+      - deploy_production
+      - raw_file_write
+      - raw_file_delete
+      - database_query
+      - database_write
+    require_confirmation:
+      - file_write
+      - file_delete
+      - git_push
+      - deploy
+    default: block
+    max_args_size: 524288

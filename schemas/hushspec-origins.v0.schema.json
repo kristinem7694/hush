@@ -54,8 +54,7 @@
           "$ref": "#/$defs/BridgePolicy"
         },
         "explanation": {
-          "type": "string",
-          "description": "Human-readable explanation for why this profile exists."
+          "type": "string"
         }
       }
     },

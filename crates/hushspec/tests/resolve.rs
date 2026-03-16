@@ -1,4 +1,7 @@
-use hushspec::{LoadedSpec, ResolveError, resolve_from_path, resolve_with_loader};
+use hushspec::{
+    BUILTIN_NAMES, LoadedSpec, ResolveError, create_composite_loader, load_builtin,
+    resolve_from_path, resolve_from_path_with_builtins, resolve_with_loader,
+};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -112,6 +115,73 @@ rules:
     assert_eq!(egress.allow, vec!["api.example.com"]);
     assert!(egress.block.is_empty());
     assert_eq!(egress.default, hushspec::DefaultAction::Block);
+}
+
+#[test]
+fn builtin_loader_resolves_all_six_rulesets() {
+    for name in BUILTIN_NAMES {
+        let yaml = load_builtin(name);
+        assert!(yaml.is_some(), "builtin '{name}' should be available");
+        let spec = hushspec::HushSpec::parse(yaml.unwrap());
+        assert!(spec.is_ok(), "builtin '{name}' should parse without error");
+        let spec = spec.unwrap();
+        assert_eq!(spec.name.as_deref(), Some(*name));
+    }
+}
+
+#[test]
+fn extends_builtin_default_end_to_end() {
+    let dir = temp_dir("resolve-builtin");
+    fs::write(
+        dir.join("child.yaml"),
+        r#"
+hushspec: "0.1.0"
+extends: builtin:default
+name: my-custom-policy
+rules:
+  egress:
+    allow: [custom.example.com]
+    default: allow
+"#,
+    )
+    .unwrap();
+
+    let resolved = resolve_from_path_with_builtins(dir.join("child.yaml")).unwrap();
+    assert!(resolved.extends.is_none());
+    assert_eq!(resolved.name.as_deref(), Some("my-custom-policy"));
+
+    let rules = resolved.rules.as_ref().unwrap();
+    // Inherited from builtin:default
+    assert!(rules.forbidden_paths.is_some());
+    assert!(rules.secret_patterns.is_some());
+    assert!(rules.tool_access.is_some());
+    // Child's own rules
+    let egress = rules.egress.as_ref().unwrap();
+    assert!(egress.allow.contains(&"custom.example.com".to_string()));
+    assert_eq!(egress.default, hushspec::DefaultAction::Allow);
+
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn composite_loader_resolves_builtin_with_custom_loader() {
+    let child = hushspec::HushSpec::parse(
+        r#"
+hushspec: "0.1.0"
+extends: builtin:strict
+name: custom
+"#,
+    )
+    .unwrap();
+
+    let loader = create_composite_loader();
+    let resolved = resolve_with_loader(&child, Some("memory://child"), &loader).unwrap();
+    assert!(resolved.extends.is_none());
+    assert_eq!(resolved.name.as_deref(), Some("custom"));
+    // Should have inherited from strict
+    let rules = resolved.rules.as_ref().unwrap();
+    let tool_access = rules.tool_access.as_ref().unwrap();
+    assert_eq!(tool_access.default, hushspec::DefaultAction::Block);
 }
 
 fn temp_dir(prefix: &str) -> PathBuf {

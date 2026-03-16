@@ -1,5 +1,3 @@
-# HushSpec Remote Desktop Ruleset
-# Security rules for Computer Use Agent (CUA) sessions
 hushspec: "0.1.0"
 name: remote-desktop
 description: Security rules for remote desktop and computer use agent sessions

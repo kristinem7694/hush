@@ -1,5 +1,3 @@
-"""Generated HushSpec extension exports."""
-
 from hushspec.generated_models import (
     BridgePolicy,
     BridgeTarget,

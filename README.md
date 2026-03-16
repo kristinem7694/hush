@@ -21,11 +21,11 @@
 
 ---
 
-HushSpec defines a declarative format for expressing security rules at the tool boundary of AI agent runtimes. It specifies **what** constraints an agent operates under — forbidden paths, egress domains, tool access, secret detection, and more — without prescribing **how** those rules are enforced. Any compliant engine can consume a HushSpec document and enforce it, making security policies portable across runtimes, frameworks, and languages.
+HushSpec is an open policy format for AI agent security rules. It defines **what** an agent may do at runtime, including filesystem access, network egress, tool usage, secret detection, and more, without prescribing **how** those controls must be enforced. That separation makes policies portable across runtimes, frameworks, and languages.
 
-**Status:** v0.1.0 (draft). The spec is under active development; breaking changes may occur before v1.0.
+**Status:** v0.1.0 (draft). The spec is still evolving, and breaking changes may occur before v1.0.
 
-The Rust crate, TypeScript package, and Python package are not published to crates.io, npm, or PyPI yet. Consume them from this repository for now.
+The Rust crate, TypeScript package, Python package, and Go module are not published to package registries yet. Use them from this repository for now.
 
 ## Quick Example
 
@@ -65,59 +65,24 @@ rules:
       - "curl.*\\|.*bash"
 ```
 
-## 10 Core Rules
+## SDK Conformance
 
-| Rule | Purpose |
-|------|---------|
-| `forbidden_paths` | Block access to sensitive filesystem paths |
-| `path_allowlist` | Allowlist-based read/write/patch access |
-| `egress` | Network egress control by domain |
-| `secret_patterns` | Detect secrets in file content |
-| `patch_integrity` | Validate diff safety (size limits, forbidden patterns) |
-| `shell_commands` | Block dangerous shell commands |
-| `tool_access` | Control tool/MCP invocations |
-| `computer_use` | Control CUA actions |
-| `remote_desktop_channels` | Control remote desktop side channels |
-| `input_injection` | Control input injection capabilities |
+All four SDKs implement the full HushSpec pipeline, from parse and validate through resolution and evaluation.
 
-## Extensions
-
-HushSpec supports optional extension modules for advanced features:
-
-| Extension | Purpose |
-|-----------|---------|
-| **Posture** | Declarative state machine for capabilities and budgets |
-| **Origins** | Origin-aware policy projection (Slack, GitHub, email, etc.) |
-| **Detection** | Threshold config for prompt injection, jailbreak, threat intel |
-
-```yaml
-extensions:
-  posture:
-    initial: standard
-    states:
-      standard: { capabilities: [file_access, egress] }
-      restricted: { capabilities: [file_access] }
-    transitions:
-      - { from: "*", to: restricted, on: critical_violation }
-  detection:
-    prompt_injection:
-      block_at_or_above: high
-```
-
-## Built-in Rulesets
-
-Ready-to-use policies in [`rulesets/`](./rulesets/):
-
-| Ruleset | Description |
-|---------|-------------|
-| `default` | Balanced security for AI agent execution |
-| `strict` | Maximum security, minimal permissions |
-| `permissive` | Development-friendly, relaxed limits |
-| `ai-agent` | Optimized for AI coding assistants |
-| `cicd` | CI/CD pipeline security |
-| `remote-desktop` | Computer use agent sessions |
+| Capability | Rust | TypeScript | Python | Go |
+|---|:---:|:---:|:---:|:---:|
+| Parse + Validate (Level 1) | Yes | Yes | Yes | Yes |
+| Merge (Level 2) | Yes | Yes | Yes | Yes |
+| Resolve (Level 2+) | Yes | Yes | Yes | Yes |
+| Evaluate (Level 3) | Yes | Yes | Yes | Yes |
+| Audit Trail (Level 4) | Yes | Yes | Yes | Yes |
+| Detection | Yes | Yes | Yes | Yes |
+| Observability | Yes | Yes | Yes | Yes |
+| Receipt Sinks | Yes | Yes | Yes | Yes |
 
 ## Getting Started
+
+The examples below use the current repo-local install path for each SDK.
 
 ### Rust
 
@@ -191,6 +156,275 @@ result := hushspec.Validate(spec)
 fmt.Println(result.IsValid())
 ```
 
+## Evaluation
+
+Each SDK exposes an `evaluate()` function that takes a parsed spec and an action, then returns a decision (`allow`, `warn`, or `deny`) plus matched rule details.
+
+```typescript
+import { parseOrThrow, evaluate } from '@hushspec/core';
+
+const spec = parseOrThrow(policyYaml);
+const result = evaluate(spec, { type: 'egress', target: 'api.openai.com' });
+// result.decision === 'allow' | 'warn' | 'deny'
+// result.matched_rule === 'egress'
+```
+
+```python
+from hushspec import parse_or_raise, evaluate
+
+spec = parse_or_raise(policy_yaml)
+result = evaluate(spec, {"type": "egress", "target": "api.openai.com"})
+assert result.decision in ("allow", "warn", "deny")
+```
+
+## HushGuard Middleware
+
+`HushGuard` wraps policy loading and evaluation behind a simple `evaluate`, `check`, and `enforce` interface for application code.
+
+```typescript
+import { HushGuard } from '@hushspec/core';
+
+const guard = HushGuard.fromFile('./policy.yaml');
+guard.enforce({ type: 'tool_call', target: 'bash' }); // throws HushSpecDenied if denied
+```
+
+```python
+from hushspec import HushGuard
+
+guard = HushGuard.from_file("./policy.yaml")
+guard.enforce({"type": "tool_call", "target": "bash"})  # raises HushSpecDenied if denied
+```
+
+## CLI Tool
+
+The `hushspec` CLI covers the common policy workflow: validate, test, lint, diff, format, initialize, sign, verify, and trigger panic mode.
+
+```bash
+# Validate a policy against the HushSpec schema
+hushspec validate policy.yaml
+
+# Run evaluation test suites
+hushspec test --fixtures ./tests/
+
+# Static analysis and linting
+hushspec lint policy.yaml
+
+# Compare two policies and show effective decision changes
+hushspec diff old.yaml new.yaml
+
+# Format policy files canonically
+hushspec fmt policy.yaml
+
+# Scaffold a new policy project
+hushspec init --preset default
+
+# Sign a policy with Ed25519
+hushspec sign policy.yaml --key hushspec.key
+
+# Verify a policy signature
+hushspec verify policy.yaml --key hushspec.pub
+
+# Generate a new Ed25519 keypair
+hushspec keygen --output hushspec
+
+# Emergency override (deny-all kill switch)
+hushspec panic activate --sentinel /tmp/hushspec.panic
+hushspec panic deactivate --sentinel /tmp/hushspec.panic
+```
+
+Build from source:
+
+```bash
+cargo install --path crates/hushspec-cli
+```
+
+<details>
+<summary>Decision Receipts (Audit Trail)</summary>
+
+`evaluate_audited()` generates structured decision receipts with rule traces, policy summaries, and optional content redaction. Receipts conform to `hushspec-receipt.v0.schema.json` and are designed to support audit-heavy environments such as SOC 2, HIPAA, PCI-DSS, and FedRAMP.
+
+```typescript
+import { parseOrThrow, evaluateAudited } from '@hushspec/core';
+
+const spec = parseOrThrow(policyYaml);
+const receipt = evaluateAudited(spec, action, {
+  enabled: true,
+  include_rule_trace: true,
+  redact_content: false,
+});
+// receipt.decision, receipt.rule_evaluations, receipt.policy_summary
+```
+
+Receipt sinks (`FileReceiptSink`, `ConsoleReceiptSink`, `FilteredSink`, `MultiSink`, `CallbackSink`) are available in all four SDKs for routing receipts to storage, logging, or OTLP endpoints.
+
+</details>
+
+<details>
+<summary>Detection Pipeline</summary>
+
+The detection pipeline plugs prompt injection, jailbreak, and exfiltration checks into the evaluation flow. Regex-based reference detectors ship with all SDKs, and custom detectors can be registered through `DetectorRegistry`.
+
+```typescript
+import { parseOrThrow, evaluateWithDetection, DetectorRegistry } from '@hushspec/core';
+
+const registry = DetectorRegistry.withDefaults();
+const result = evaluateWithDetection(spec, action, registry, {
+  enabled: true,
+  prompt_injection_threshold: 0.5,
+});
+// result.detection_results contains matched patterns and confidence scores
+```
+
+</details>
+
+<details>
+<summary>Framework Adapters</summary>
+
+Prebuilt adapters translate framework-specific tool calls into HushSpec evaluation actions.
+
+| Framework | Adapter | SDK |
+|---|---|---|
+| Claude / Anthropic | `mapClaudeToolToAction`, `createSecureToolHandler` | TypeScript |
+| OpenAI | `mapOpenAIToolCall`, `createOpenAIGuard` | TypeScript |
+| MCP (Model Context Protocol) | `mapMCPToolCall`, `createMCPGuard` | TypeScript |
+
+```typescript
+import { HushGuard, mapClaudeToolToAction } from '@hushspec/core';
+
+const guard = HushGuard.fromFile('./policy.yaml');
+const action = mapClaudeToolToAction(toolUseBlock);
+guard.enforce(action);
+```
+
+</details>
+
+<details>
+<summary>Observability</summary>
+
+The `EvaluationObserver` interface and `ObservableEvaluator` wrapper emit structured events for every evaluation, policy load, and policy reload. Built-in observers include `JsonLineObserver`, `ConsoleObserver`, and `MetricsCollector`.
+
+```typescript
+import { ObservableEvaluator, JsonLineObserver, MetricsCollector } from '@hushspec/core';
+
+const evaluator = new ObservableEvaluator();
+evaluator.addObserver(new JsonLineObserver(process.stderr));
+evaluator.addObserver(new MetricsCollector());
+const result = evaluator.evaluate(spec, action);
+```
+
+</details>
+
+<details>
+<summary>Policy Signing</summary>
+
+Policies can be signed with Ed25519 keys and verified at load time. The CLI provides `sign`, `verify`, and `keygen` commands. The signature format conforms to `hushspec-signature.v0.schema.json`.
+
+```bash
+# Generate a keypair
+hushspec keygen --output mykey
+
+# Sign a policy (creates policy.yaml.sig)
+hushspec sign policy.yaml --key mykey.key
+
+# Verify the signature
+hushspec verify policy.yaml --key mykey.pub
+```
+
+</details>
+
+<details>
+<summary>Emergency Override (Panic Mode)</summary>
+
+Panic mode is a deny-all kill switch that can be activated immediately without redeploying policies. You can trigger it with a sentinel file, the CLI, or an API call. While panic mode is active, every evaluation returns `deny`.
+
+```bash
+# Activate panic mode
+hushspec panic activate --sentinel /tmp/hushspec.panic
+
+# Deactivate
+hushspec panic deactivate --sentinel /tmp/hushspec.panic
+```
+
+```typescript
+import { activatePanic, deactivatePanic, isPanicActive } from '@hushspec/core';
+
+activatePanic();
+// All evaluate() calls now return deny
+deactivatePanic();
+```
+
+</details>
+
+<details>
+<summary>Policy Loading and Hot Reload</summary>
+
+Policies can be loaded from local files, HTTPS URLs (with ETag caching and SSRF protection), or built-in rulesets. `PolicyWatcher` and `PolicyPoller` support hot reload without restarting the process.
+
+```typescript
+import { PolicyWatcher, HushGuard } from '@hushspec/core';
+
+const guard = HushGuard.fromFile('./policy.yaml');
+const watcher = new PolicyWatcher('./policy.yaml', {
+  onChange: (newSpec) => guard.swapPolicy(newSpec),
+});
+watcher.start();
+```
+
+</details>
+
+## 10 Core Rules
+
+| Rule | Purpose |
+|------|---------|
+| `forbidden_paths` | Block access to sensitive filesystem paths |
+| `path_allowlist` | Allowlist-based read/write/patch access |
+| `egress` | Network egress control by domain |
+| `secret_patterns` | Detect secrets in file content |
+| `patch_integrity` | Validate diff safety (size limits, forbidden patterns) |
+| `shell_commands` | Block dangerous shell commands |
+| `tool_access` | Control tool/MCP invocations |
+| `computer_use` | Control CUA actions |
+| `remote_desktop_channels` | Control remote desktop side channels |
+| `input_injection` | Control input injection capabilities |
+
+## Extensions
+
+HushSpec supports optional extension modules for more advanced policy behavior:
+
+| Extension | Purpose |
+|-----------|---------|
+| **Posture** | Declarative state machine for capabilities and budgets |
+| **Origins** | Origin-aware policy projection (Slack, GitHub, email, etc.) |
+| **Detection** | Threshold config for prompt injection, jailbreak, threat intel |
+
+```yaml
+extensions:
+  posture:
+    initial: standard
+    states:
+      standard: { capabilities: [file_access, egress] }
+      restricted: { capabilities: [file_access] }
+    transitions:
+      - { from: "*", to: restricted, on: critical_violation }
+  detection:
+    prompt_injection:
+      block_at_or_above: high
+```
+
+## Built-in Rulesets
+
+Ready-to-use policies live in [`rulesets/`](./rulesets/):
+
+| Ruleset | Description |
+|---------|-------------|
+| `default` | Balanced security for AI agent execution |
+| `strict` | Maximum security, minimal permissions |
+| `permissive` | Development-friendly, relaxed limits |
+| `ai-agent` | Optimized for AI coding assistants |
+| `cicd` | CI/CD pipeline security |
+| `remote-desktop` | Computer use agent sessions |
+| `panic` | Deny-all emergency override |
+
 ### Using with Clawdstrike
 
 HushSpec documents load natively in [Clawdstrike](https://github.com/backbay-labs/clawdstrike):
@@ -207,22 +441,27 @@ hush policy migrate policy.yaml --to hushspec
 
 ## Repo Structure
 
-```
-spec/           Normative specification (core + 3 extensions)
-schemas/        JSON Schema definitions (draft 2020-12)
-crates/         Rust reference crate (hushspec) + testkit CLI
-packages/       Language SDKs (TypeScript, Python, Go)
-rulesets/       6 built-in security rulesets
-fixtures/       31 conformance test fixtures
-docs/           mdBook documentation site
+```text
+spec/              Normative specification, including core and extension docs
+schemas/           JSON Schema definitions
+crates/            Rust crates
+  hushspec/          Core library: parse, validate, merge, resolve, evaluate, detect, sign
+  hushspec-cli/      CLI tool
+  hushspec-testkit/  Conformance test runner
+packages/          Language SDKs for TypeScript, Python, and Go
+rulesets/          Built-in security rulesets
+fixtures/          Conformance and evaluation fixtures
+docs/              mdBook documentation site
+generated/         Generated shared SDK contract artifacts
+scripts/           Code generation and CI tooling
 ```
 
 ## Design Principles
 
-- **Fail-closed** — Unknown fields are rejected; invalid documents produce errors, not silent misconfiguration
-- **Stateless** — Core rules are pure declarations with no runtime state
-- **Engine-neutral** — No detection algorithms, receipt formats, or plugin systems in the spec
-- **Extensible** — Optional modules for posture, origins, and detection without bloating the core
+- **Fail-closed**: Unknown fields are rejected, and invalid documents fail with explicit errors.
+- **Stateless**: Core rules are pure declarations with no runtime state.
+- **Engine-neutral**: The spec does not require a specific enforcement engine, detector, or plugin model.
+- **Extensible**: Posture, origins, and detection stay optional instead of bloating the core format.
 
 ## Specification
 

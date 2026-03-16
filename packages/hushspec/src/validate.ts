@@ -2,6 +2,7 @@ import type { HushSpec } from './schema.js';
 import {
   BRIDGE_POLICY_KEYS_SET,
   BRIDGE_TARGET_KEYS_SET,
+  CLASSIFICATIONS_SET,
   COMPUTER_USE_KEYS_SET,
   COMPUTER_USE_MODES_SET,
   DEFAULT_ACTIONS_SET,
@@ -10,8 +11,10 @@ import {
   EGRESS_KEYS_SET,
   EXTENSION_KEYS_SET,
   FORBIDDEN_PATH_KEYS_SET,
+  GOVERNANCE_METADATA_KEYS_SET,
   INPUT_INJECTION_KEYS_SET,
   JAILBREAK_KEYS_SET,
+  LIFECYCLE_STATES_SET,
   MERGE_STRATEGIES_SET,
   ORIGINS_KEYS_SET,
   ORIGIN_BUDGET_KEYS_SET,
@@ -38,15 +41,16 @@ import {
   TOP_LEVEL_KEYS_SET,
   TRANSITION_TRIGGERS_SET,
 } from './generated/contract.js';
+import { compilePolicyRegex, isSafeRegex } from './regex.js';
 import { isSupported } from './version.js';
 
-/** A single validation error with a machine-readable code. */
+export { isSafeRegex };
+
 export interface ValidationError {
   code: string;
   message: string;
 }
 
-/** Outcome of validating a HushSpec document. */
 export interface ValidationResult {
   valid: boolean;
   errors: ValidationError[];
@@ -71,11 +75,6 @@ const BUDGET_NAMES = new Set([
   'file_writes', 'egress_calls', 'shell_commands', 'tool_calls', 'patches', 'custom_calls',
 ]);
 
-/**
- * Validate a parsed HushSpec document for structural correctness.
- *
- * Checks fail-closed schema constraints plus cross-field validation and warnings.
- */
 export function validate(spec: HushSpec): ValidationResult {
   return validateDocument(spec as unknown, {
     checkSupportedVersion: true,
@@ -148,6 +147,14 @@ function validateTopLevel(obj: UnknownRecord, ctx: ValidationContext): void {
       addError(ctx, 'invalid_extensions', 'extensions must be an object');
     } else {
       validateExtensions(obj.extensions, ctx);
+    }
+  }
+
+  if ('metadata' in obj) {
+    if (!isRecord(obj.metadata)) {
+      addError(ctx, 'invalid_metadata', 'metadata must be an object');
+    } else {
+      validateGovernanceMetadata(obj.metadata, ctx);
     }
   }
 }
@@ -507,6 +514,43 @@ function validateOriginsExtension(
   });
 }
 
+function validateGovernanceMetadata(obj: UnknownRecord, ctx: ValidationContext): void {
+  const path = 'metadata';
+  rejectUnknownKeys(obj, GOVERNANCE_METADATA_KEYS_SET, ctx, 'unknown_field', key => `unknown field at ${path}: ${key}`);
+
+  validateOptionalString(obj, 'author', ctx, `${path}.author`);
+  validateOptionalString(obj, 'approved_by', ctx, `${path}.approved_by`);
+  validateOptionalString(obj, 'approval_date', ctx, `${path}.approval_date`);
+  validateOptionalEnum(obj, 'classification', ctx, `${path}.classification`, CLASSIFICATIONS_SET);
+  validateOptionalString(obj, 'change_ticket', ctx, `${path}.change_ticket`);
+  validateOptionalEnum(obj, 'lifecycle_state', ctx, `${path}.lifecycle_state`, LIFECYCLE_STATES_SET);
+  validateOptionalInteger(obj, 'policy_version', ctx, `${path}.policy_version`, { min: 1 });
+  validateOptionalString(obj, 'effective_date', ctx, `${path}.effective_date`);
+  validateOptionalString(obj, 'expiry_date', ctx, `${path}.expiry_date`);
+
+  if (!ctx.includeWarnings) return;
+
+  const lifecycleState = typeof obj.lifecycle_state === 'string' ? obj.lifecycle_state : undefined;
+  if (lifecycleState === 'deprecated' || lifecycleState === 'archived') {
+    ctx.warnings.push(`policy lifecycle state is '${lifecycleState}'`);
+  }
+
+  if (typeof obj.expiry_date === 'string') {
+    const today = new Date().toISOString().slice(0, 10);
+    if (obj.expiry_date < today) {
+      ctx.warnings.push(`policy expiry_date '${obj.expiry_date}' is in the past`);
+    }
+  }
+
+  if ('approved_by' in obj && !('approval_date' in obj)) {
+    ctx.warnings.push('approved_by is set but approval_date is missing');
+  }
+
+  if (obj.classification === 'restricted' && !('approved_by' in obj)) {
+    ctx.warnings.push("classification is 'restricted' but no approved_by is set");
+  }
+}
+
 function validateDetectionExtension(obj: UnknownRecord, ctx: ValidationContext, path: string): void {
   rejectUnknownKeys(obj, DETECTION_KEYS_SET, ctx, 'unknown_field', key => `unknown field at ${path}: ${key}`);
 
@@ -532,7 +576,7 @@ function validateDetectionExtension(obj: UnknownRecord, ctx: ValidationContext, 
     const warn = validateOptionalInteger(section, 'warn_threshold', sectionCtx, `${sectionPath}.warn_threshold`, { min: 0, max: 100 });
     validateOptionalInteger(section, 'max_input_bytes', sectionCtx, `${sectionPath}.max_input_bytes`, { min: 1 });
 
-    if (sectionCtx.includeWarnings && block !== undefined && warn !== undefined && block < warn) {
+    if (sectionCtx.includeWarnings && block != null && warn != null && block < warn) {
       sectionCtx.warnings.push('detection.jailbreak: block_threshold is lower than warn_threshold');
     }
   });
@@ -702,7 +746,7 @@ function validateOptionalStringArray(
   value.forEach((item, index) => {
     const itemPath = `${path}[${index}]`;
     const stringValue = validateStringValue(item, ctx, itemPath);
-    if (stringValue !== undefined) {
+    if (stringValue != null) {
       items.push(stringValue);
     }
   });
@@ -736,7 +780,7 @@ function validateEnumValue(
 
   const set = allowed instanceof Set ? allowed : new Set(allowed);
   if (!set.has(value)) {
-    addError(ctx, 'invalid_enum', `${path} must be one of: ${Array.from(set).join(', ')}`);
+    addError(ctx, 'invalid_enum', `${path} must be one of: ${[...set].join(', ')}`);
     return undefined;
   }
   return value;
@@ -774,15 +818,15 @@ function validateBounds(
   path: string,
   bounds: NumberBounds,
 ): number | undefined {
-  if (bounds.min !== undefined && value < bounds.min) {
+  if (bounds.min != null && value < bounds.min) {
     addError(ctx, 'out_of_range', `${path} must be >= ${bounds.min}`);
     return undefined;
   }
-  if (bounds.max !== undefined && value > bounds.max) {
+  if (bounds.max != null && value > bounds.max) {
     addError(ctx, 'out_of_range', `${path} must be <= ${bounds.max}`);
     return undefined;
   }
-  if (bounds.minExclusive !== undefined && value <= bounds.minExclusive) {
+  if (bounds.minExclusive != null && value <= bounds.minExclusive) {
     addError(ctx, 'out_of_range', `${path} must be > ${bounds.minExclusive}`);
     return undefined;
   }
@@ -791,14 +835,21 @@ function validateBounds(
 
 function validateRegex(pattern: string, ctx: ValidationContext, path: string): void {
   try {
-    // Validate syntax only; semantics remain engine-specific.
-    // eslint-disable-next-line no-new
-    new RegExp(pattern);
+    compilePolicyRegex(pattern);
   } catch (error) {
     addError(
       ctx,
       'invalid_regex',
       `${path} must be a valid regular expression: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+
+  if (!isSafeRegex(pattern)) {
+    addError(
+      ctx,
+      'non_re2_regex',
+      `${path}: pattern uses features not in the RE2 subset (backreferences, lookaround, etc.) which may cause ReDoS`,
     );
   }
 }

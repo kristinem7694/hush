@@ -9,6 +9,7 @@ pub const TOP_LEVEL_KEYS: &[&str] = &[
     "merge_strategy",
     "rules",
     "extensions",
+    "metadata",
 ];
 pub const RULE_KEYS: &[&str] = &[
     "forbidden_paths",
@@ -23,6 +24,17 @@ pub const RULE_KEYS: &[&str] = &[
     "input_injection",
 ];
 pub const EXTENSION_KEYS: &[&str] = &["posture", "origins", "detection"];
+pub const GOVERNANCE_METADATA_KEYS: &[&str] = &[
+    "author",
+    "approved_by",
+    "approval_date",
+    "classification",
+    "change_ticket",
+    "lifecycle_state",
+    "policy_version",
+    "effective_date",
+    "expiry_date",
+];
 pub const FORBIDDEN_PATH_KEYS: &[&str] = &["enabled", "patterns", "exceptions"];
 pub const PATH_ALLOWLIST_KEYS: &[&str] = &["enabled", "read", "write", "patch"];
 pub const EGRESS_KEYS: &[&str] = &["enabled", "allow", "block", "default"];
@@ -131,3 +143,12 @@ pub const ORIGIN_SPACE_TYPES: &[&str] = &[
 ];
 pub const ORIGIN_VISIBILITIES: &[&str] = &["private", "internal", "public", "external_shared"];
 pub const DETECTION_LEVELS: &[&str] = &["safe", "suspicious", "high", "critical"];
+pub const CLASSIFICATIONS: &[&str] = &["public", "internal", "confidential", "restricted"];
+pub const LIFECYCLE_STATES: &[&str] = &[
+    "draft",
+    "review",
+    "approved",
+    "deployed",
+    "deprecated",
+    "archived",
+];

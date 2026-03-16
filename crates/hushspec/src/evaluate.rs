@@ -1,13 +1,15 @@
 use crate::HushSpec;
+use crate::conditions::{Condition, RuntimeContext, evaluate_condition};
 use crate::extensions::{OriginProfile, PostureExtension, TransitionTrigger};
 use crate::rules::{
-    ComputerUseMode, ComputerUseRule, DefaultAction, EgressRule, ForbiddenPathsRule,
-    PatchIntegrityRule, PathAllowlistRule, SecretPatternsRule, ShellCommandsRule, ToolAccessRule,
+    ComputerUseMode, ComputerUseRule, DefaultAction, ForbiddenPathsRule, InputInjectionRule,
+    PatchIntegrityRule, PathAllowlistRule, RemoteDesktopChannelsRule, SecretPatternsRule,
+    ShellCommandsRule,
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
-/// Decision returned by the reference evaluator.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Decision {
@@ -16,7 +18,6 @@ pub enum Decision {
     Deny,
 }
 
-/// Action context evaluated against a resolved HushSpec document.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvaluationAction {
@@ -34,7 +35,6 @@ pub struct EvaluationAction {
     pub args_size: Option<usize>,
 }
 
-/// Origin metadata supplied with an action.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OriginContext {
@@ -58,7 +58,6 @@ pub struct OriginContext {
     pub actor_role: Option<String>,
 }
 
-/// Posture metadata supplied with an action.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostureContext {
@@ -68,7 +67,6 @@ pub struct PostureContext {
     pub signal: Option<String>,
 }
 
-/// Structured result from the reference evaluator.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvaluationResult {
@@ -83,7 +81,6 @@ pub struct EvaluationResult {
     pub posture: Option<PostureResult>,
 }
 
-/// Posture state information attached to an evaluation result.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PostureResult {
@@ -92,6 +89,16 @@ pub struct PostureResult {
 }
 
 pub fn evaluate(spec: &HushSpec, action: &EvaluationAction) -> EvaluationResult {
+    if crate::panic::is_panic_active() {
+        return EvaluationResult {
+            decision: Decision::Deny,
+            matched_rule: Some("__hushspec_panic__".to_string()),
+            reason: Some("emergency panic mode is active".to_string()),
+            origin_profile: None,
+            posture: None,
+        };
+    }
+
     let matched_profile = select_origin_profile(spec, action.origin.as_ref());
     let origin_profile_id = matched_profile.map(|profile| profile.id.clone());
     let posture = resolve_posture(spec, matched_profile, action.posture.as_ref());
@@ -116,6 +123,7 @@ pub fn evaluate(spec: &HushSpec, action: &EvaluationAction) -> EvaluationResult 
             evaluate_shell_command(spec, action, matched_profile, posture, origin_profile_id)
         }
         "computer_use" => evaluate_computer_use(spec, action, posture, origin_profile_id),
+        "input_inject" => evaluate_input_injection(spec, action, posture, origin_profile_id),
         _ => EvaluationResult {
             decision: Decision::Allow,
             matched_rule: None,
@@ -126,6 +134,125 @@ pub fn evaluate(spec: &HushSpec, action: &EvaluationAction) -> EvaluationResult 
     }
 }
 
+/// Like [`evaluate`] but filters rule blocks through `when` conditions first.
+///
+/// Rule blocks whose conditions evaluate to false are treated as inert.
+/// Rule blocks not present in the conditions map are unconditionally active.
+pub fn evaluate_with_context(
+    spec: &HushSpec,
+    action: &EvaluationAction,
+    context: &RuntimeContext,
+    conditions: &HashMap<String, Condition>,
+) -> EvaluationResult {
+    if crate::panic::is_panic_active() {
+        return EvaluationResult {
+            decision: Decision::Deny,
+            matched_rule: Some("__hushspec_panic__".to_string()),
+            reason: Some("emergency panic mode is active".to_string()),
+            origin_profile: None,
+            posture: None,
+        };
+    }
+
+    let matched_profile = select_origin_profile(spec, action.origin.as_ref());
+    let origin_profile_id = matched_profile.map(|profile| profile.id.clone());
+    let posture = resolve_posture(spec, matched_profile, action.posture.as_ref());
+
+    if let Some(denied) = posture_capability_guard(action, &posture, spec, &origin_profile_id) {
+        return denied;
+    }
+
+    let effective_spec = apply_conditions(spec, context, conditions);
+
+    match action.action_type.as_str() {
+        "tool_call" => evaluate_tool_call(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "egress" => evaluate_egress(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "file_read" => evaluate_file_read(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "file_write" => evaluate_file_write(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "patch_apply" => evaluate_patch(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "shell_command" => evaluate_shell_command(
+            &effective_spec,
+            action,
+            matched_profile,
+            posture,
+            origin_profile_id,
+        ),
+        "computer_use" => {
+            evaluate_computer_use(&effective_spec, action, posture, origin_profile_id)
+        }
+        "input_inject" => {
+            evaluate_input_injection(&effective_spec, action, posture, origin_profile_id)
+        }
+        _ => EvaluationResult {
+            decision: Decision::Allow,
+            matched_rule: None,
+            reason: Some("no reference evaluator rule for this action type".to_string()),
+            origin_profile: origin_profile_id,
+            posture,
+        },
+    }
+}
+
+fn apply_conditions(
+    spec: &HushSpec,
+    context: &RuntimeContext,
+    conditions: &HashMap<String, Condition>,
+) -> HushSpec {
+    let mut effective = spec.clone();
+
+    if let Some(rules) = &mut effective.rules {
+        for (block_name, condition) in conditions {
+            if !evaluate_condition(condition, context) {
+                match block_name.as_str() {
+                    "forbidden_paths" => rules.forbidden_paths = None,
+                    "path_allowlist" => rules.path_allowlist = None,
+                    "egress" => rules.egress = None,
+                    "secret_patterns" => rules.secret_patterns = None,
+                    "patch_integrity" => rules.patch_integrity = None,
+                    "shell_commands" => rules.shell_commands = None,
+                    "tool_access" => rules.tool_access = None,
+                    "computer_use" => rules.computer_use = None,
+                    "remote_desktop_channels" => rules.remote_desktop_channels = None,
+                    "input_injection" => rules.input_injection = None,
+                    _ => {} // Unknown block name -- ignore silently.
+                }
+            }
+        }
+    }
+
+    effective
+}
+
 fn evaluate_tool_call(
     spec: &HushSpec,
     action: &EvaluationAction,
@@ -133,36 +260,155 @@ fn evaluate_tool_call(
     posture: Option<PostureResult>,
     origin_profile_id: Option<String>,
 ) -> EvaluationResult {
-    let selected = matched_profile
-        .and_then(|profile| {
-            profile.tool_access.as_ref().map(|rule| {
-                (
-                    rule,
-                    profile_rule_prefix(profile.id.as_str(), "tool_access"),
-                )
+    let base_rule = spec
+        .rules
+        .as_ref()
+        .and_then(|rules| rules.tool_access.as_ref())
+        .filter(|rule| rule.enabled);
+    let profile_rule = matched_profile
+        .and_then(|profile| profile.tool_access.as_ref())
+        .filter(|rule| rule.enabled);
+
+    if base_rule.is_none() && profile_rule.is_none() {
+        return allow_result(None, None, origin_profile_id, posture);
+    }
+
+    let target = action.target.as_deref().unwrap_or_default();
+    let profile_prefix =
+        matched_profile.map(|profile| profile_rule_prefix(profile.id.as_str(), "tool_access"));
+
+    let smallest_arg_limit = [
+        base_rule.and_then(|rule| {
+            rule.max_args_size
+                .map(|max_args_size| (max_args_size, "rules.tool_access.max_args_size".to_string()))
+        }),
+        profile_rule.and_then(|rule| {
+            profile_prefix.as_ref().and_then(|prefix| {
+                rule.max_args_size
+                    .map(|max_args_size| (max_args_size, format!("{prefix}.max_args_size")))
             })
-        })
-        .or_else(|| {
-            spec.rules.as_ref().and_then(|rules| {
-                rules
-                    .tool_access
-                    .as_ref()
-                    .map(|rule| (rule, "rules.tool_access".to_string()))
-            })
-        });
-    let (rule, prefix) = match selected {
-        Some((rule, prefix)) => (Some(rule), Some(prefix)),
-        None => (None, None),
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .min_by_key(|(max_args_size, _)| *max_args_size);
+
+    if let Some((max_args_size, matched_rule)) = smallest_arg_limit
+        && action.args_size.unwrap_or_default() > max_args_size
+    {
+        return deny_result(
+            Some(matched_rule),
+            Some("tool arguments exceeded max_args_size".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+
+    if base_rule
+        .and_then(|rule| find_first_match(target, &rule.block))
+        .is_some()
+    {
+        return deny_result(
+            Some("rules.tool_access.block".to_string()),
+            Some("tool is explicitly blocked".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+    if let Some(prefix) = profile_prefix.as_ref()
+        && profile_rule
+            .and_then(|rule| find_first_match(target, &rule.block))
+            .is_some()
+    {
+        return deny_result(
+            Some(format!("{prefix}.block")),
+            Some("tool is explicitly blocked".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+
+    if base_rule
+        .and_then(|rule| find_first_match(target, &rule.require_confirmation))
+        .is_some()
+    {
+        return warn_result(
+            Some("rules.tool_access.require_confirmation".to_string()),
+            Some("tool requires confirmation".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+    if let Some(prefix) = profile_prefix.as_ref()
+        && profile_rule
+            .and_then(|rule| find_first_match(target, &rule.require_confirmation))
+            .is_some()
+    {
+        return warn_result(
+            Some(format!("{prefix}.require_confirmation")),
+            Some("tool requires confirmation".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+
+    let base_has_allow = base_rule.is_some_and(|rule| !rule.allow.is_empty());
+    let profile_has_allow = profile_rule.is_some_and(|rule| !rule.allow.is_empty());
+    let base_allow_match = !base_has_allow
+        || base_rule
+            .and_then(|rule| find_first_match(target, &rule.allow))
+            .is_some();
+    let profile_allow_match = !profile_has_allow
+        || profile_rule
+            .and_then(|rule| find_first_match(target, &rule.allow))
+            .is_some();
+    if (base_has_allow || profile_has_allow) && base_allow_match && profile_allow_match {
+        let matched_rule = if profile_has_allow {
+            profile_prefix
+                .as_ref()
+                .map(|prefix| format!("{prefix}.allow"))
+        } else if base_has_allow {
+            Some("rules.tool_access.allow".to_string())
+        } else {
+            None
+        };
+        return allow_result(
+            matched_rule,
+            Some("tool is explicitly allowed".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+
+    let default_action = if base_rule.is_some_and(|rule| rule.default == DefaultAction::Block)
+        || profile_rule.is_some_and(|rule| rule.default == DefaultAction::Block)
+    {
+        DefaultAction::Block
+    } else {
+        DefaultAction::Allow
+    };
+    let default_rule = if profile_rule.is_some() {
+        profile_prefix.map(|prefix| format!("{prefix}.default"))
+    } else if base_rule.is_some() {
+        Some("rules.tool_access.default".to_string())
+    } else {
+        None
     };
 
-    evaluate_tool_access_rule(
-        rule,
-        prefix.as_deref(),
-        action.target.as_deref().unwrap_or_default(),
-        action.args_size,
-        posture,
-        origin_profile_id,
-    )
+    match default_action {
+        DefaultAction::Allow => allow_result(
+            default_rule,
+            Some("tool matched default allow".to_string()),
+            origin_profile_id,
+            posture,
+        ),
+        DefaultAction::Block => deny_result(
+            default_rule,
+            Some("tool matched default block".to_string()),
+            origin_profile_id,
+            posture,
+        ),
+    }
 }
 
 fn evaluate_egress(
@@ -172,35 +418,103 @@ fn evaluate_egress(
     posture: Option<PostureResult>,
     origin_profile_id: Option<String>,
 ) -> EvaluationResult {
-    let selected = matched_profile
-        .and_then(|profile| {
-            profile
-                .egress
+    let base_rule = spec
+        .rules
+        .as_ref()
+        .and_then(|rules| rules.egress.as_ref())
+        .filter(|rule| rule.enabled);
+    let profile_rule = matched_profile
+        .and_then(|profile| profile.egress.as_ref())
+        .filter(|rule| rule.enabled);
+
+    if base_rule.is_none() && profile_rule.is_none() {
+        return allow_result(None, None, origin_profile_id, posture);
+    }
+
+    let target = action.target.as_deref().unwrap_or_default();
+    let profile_prefix =
+        matched_profile.map(|profile| profile_rule_prefix(profile.id.as_str(), "egress"));
+
+    if base_rule
+        .and_then(|rule| find_first_match(target, &rule.block))
+        .is_some()
+    {
+        return deny_result(
+            Some("rules.egress.block".to_string()),
+            Some("domain is explicitly blocked".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+    if let Some(prefix) = profile_prefix.as_ref()
+        && profile_rule
+            .and_then(|rule| find_first_match(target, &rule.block))
+            .is_some()
+    {
+        return deny_result(
+            Some(format!("{prefix}.block")),
+            Some("domain is explicitly blocked".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+
+    let base_has_allow = base_rule.is_some_and(|rule| !rule.allow.is_empty());
+    let profile_has_allow = profile_rule.is_some_and(|rule| !rule.allow.is_empty());
+    let base_allow_match = !base_has_allow
+        || base_rule
+            .and_then(|rule| find_first_match(target, &rule.allow))
+            .is_some();
+    let profile_allow_match = !profile_has_allow
+        || profile_rule
+            .and_then(|rule| find_first_match(target, &rule.allow))
+            .is_some();
+    if (base_has_allow || profile_has_allow) && base_allow_match && profile_allow_match {
+        let matched_rule = if profile_has_allow {
+            profile_prefix
                 .as_ref()
-                .map(|rule| (rule, profile_rule_prefix(profile.id.as_str(), "egress")))
-        })
-        .or_else(|| {
-            spec.rules.as_ref().and_then(|rules| {
-                rules
-                    .egress
-                    .as_ref()
-                    .map(|rule| (rule, "rules.egress".to_string()))
-            })
-        });
-    let (rule, prefix) = match selected {
-        Some((rule, prefix)) => (Some(rule), Some(prefix)),
-        None => (None, None),
+                .map(|prefix| format!("{prefix}.allow"))
+        } else if base_has_allow {
+            Some("rules.egress.allow".to_string())
+        } else {
+            None
+        };
+        return allow_result(
+            matched_rule,
+            Some("domain is explicitly allowed".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+
+    let default_action = if base_rule.is_some_and(|rule| rule.default == DefaultAction::Block)
+        || profile_rule.is_some_and(|rule| rule.default == DefaultAction::Block)
+    {
+        DefaultAction::Block
+    } else {
+        DefaultAction::Allow
+    };
+    let default_rule = if profile_rule.is_some() {
+        profile_prefix.map(|prefix| format!("{prefix}.default"))
+    } else if base_rule.is_some() {
+        Some("rules.egress.default".to_string())
+    } else {
+        None
     };
 
-    match rule {
-        Some(rule) => evaluate_egress_rule(
-            rule,
-            prefix.as_deref().unwrap_or("rules.egress"),
-            action.target.as_deref().unwrap_or_default(),
-            posture,
+    match default_action {
+        DefaultAction::Allow => allow_result(
+            default_rule,
+            Some("domain matched default allow".to_string()),
             origin_profile_id,
+            posture,
         ),
-        None => allow_result(None, None, origin_profile_id, posture),
+        DefaultAction::Block => deny_result(
+            default_rule,
+            Some("domain matched default block".to_string()),
+            origin_profile_id,
+            posture,
+        ),
     }
 }
 
@@ -320,12 +634,46 @@ fn evaluate_computer_use(
     posture: Option<PostureResult>,
     origin_profile_id: Option<String>,
 ) -> EvaluationResult {
-    if let Some(rule) = spec
+    let target = action.target.as_deref().unwrap_or_default();
+    let computer_use_result = spec
         .rules
         .as_ref()
         .and_then(|rules| rules.computer_use.as_ref())
+        .map(|rule| {
+            evaluate_computer_use_rule(rule, target, posture.clone(), origin_profile_id.clone())
+        });
+    let remote_desktop_result = spec
+        .rules
+        .as_ref()
+        .and_then(|rules| rules.remote_desktop_channels.as_ref())
+        .and_then(|rule| {
+            evaluate_remote_desktop_channels_rule(
+                rule,
+                target,
+                posture.clone(),
+                origin_profile_id.clone(),
+            )
+        });
+
+    match (computer_use_result, remote_desktop_result) {
+        (Some(left), Some(right)) => more_restrictive_result(left, right),
+        (Some(result), None) | (None, Some(result)) => result,
+        (None, None) => allow_result(None, None, origin_profile_id, posture),
+    }
+}
+
+fn evaluate_input_injection(
+    spec: &HushSpec,
+    action: &EvaluationAction,
+    posture: Option<PostureResult>,
+    origin_profile_id: Option<String>,
+) -> EvaluationResult {
+    if let Some(rule) = spec
+        .rules
+        .as_ref()
+        .and_then(|rules| rules.input_injection.as_ref())
     {
-        return evaluate_computer_use_rule(
+        return evaluate_input_injection_rule(
             rule,
             action.target.as_deref().unwrap_or_default(),
             posture,
@@ -334,118 +682,6 @@ fn evaluate_computer_use(
     }
 
     allow_result(None, None, origin_profile_id, posture)
-}
-
-fn evaluate_tool_access_rule(
-    rule: Option<&ToolAccessRule>,
-    prefix: Option<&str>,
-    target: &str,
-    args_size: Option<usize>,
-    posture: Option<PostureResult>,
-    origin_profile_id: Option<String>,
-) -> EvaluationResult {
-    let Some(rule) = rule else {
-        return allow_result(None, None, origin_profile_id, posture);
-    };
-
-    if !rule.enabled {
-        return allow_result(None, None, origin_profile_id, posture);
-    }
-
-    if let Some(max_args_size) = rule.max_args_size
-        && args_size.unwrap_or_default() > max_args_size
-    {
-        return deny_result(
-            prefixed_rule(prefix, "max_args_size"),
-            Some("tool arguments exceeded max_args_size".to_string()),
-            origin_profile_id,
-            posture,
-        );
-    }
-
-    if find_first_match(target, &rule.block).is_some() {
-        return deny_result(
-            prefixed_rule(prefix, "block"),
-            Some("tool is explicitly blocked".to_string()),
-            origin_profile_id,
-            posture,
-        );
-    }
-    if find_first_match(target, &rule.require_confirmation).is_some() {
-        return warn_result(
-            prefixed_rule(prefix, "require_confirmation"),
-            Some("tool requires confirmation".to_string()),
-            origin_profile_id,
-            posture,
-        );
-    }
-    if find_first_match(target, &rule.allow).is_some() {
-        return allow_result(
-            prefixed_rule(prefix, "allow"),
-            Some("tool is explicitly allowed".to_string()),
-            origin_profile_id,
-            posture,
-        );
-    }
-
-    match rule.default {
-        DefaultAction::Allow => allow_result(
-            prefixed_rule(prefix, "default"),
-            Some("tool matched default allow".to_string()),
-            origin_profile_id,
-            posture,
-        ),
-        DefaultAction::Block => deny_result(
-            prefixed_rule(prefix, "default"),
-            Some("tool matched default block".to_string()),
-            origin_profile_id,
-            posture,
-        ),
-    }
-}
-
-fn evaluate_egress_rule(
-    rule: &EgressRule,
-    prefix: &str,
-    target: &str,
-    posture: Option<PostureResult>,
-    origin_profile_id: Option<String>,
-) -> EvaluationResult {
-    if !rule.enabled {
-        return allow_result(None, None, origin_profile_id, posture);
-    }
-
-    if find_first_match(target, &rule.block).is_some() {
-        return deny_result(
-            prefixed_rule(Some(prefix), "block"),
-            Some("domain is explicitly blocked".to_string()),
-            origin_profile_id,
-            posture,
-        );
-    }
-    if find_first_match(target, &rule.allow).is_some() {
-        return allow_result(
-            prefixed_rule(Some(prefix), "allow"),
-            Some("domain is explicitly allowed".to_string()),
-            origin_profile_id,
-            posture,
-        );
-    }
-
-    match rule.default {
-        DefaultAction::Allow => allow_result(
-            prefixed_rule(Some(prefix), "default"),
-            Some("domain matched default allow".to_string()),
-            origin_profile_id,
-            posture,
-        ),
-        DefaultAction::Block => deny_result(
-            prefixed_rule(Some(prefix), "default"),
-            Some("domain matched default block".to_string()),
-            origin_profile_id,
-            posture,
-        ),
-    }
 }
 
 fn evaluate_secret_patterns(
@@ -609,6 +845,107 @@ fn evaluate_computer_use_rule(
     }
 }
 
+fn evaluate_remote_desktop_channels_rule(
+    rule: &RemoteDesktopChannelsRule,
+    target: &str,
+    posture: Option<PostureResult>,
+    origin_profile_id: Option<String>,
+) -> Option<EvaluationResult> {
+    if !rule.enabled {
+        return None;
+    }
+
+    let (field, allowed) = match target {
+        "remote.clipboard" => ("clipboard", rule.clipboard),
+        "remote.file_transfer" => ("file_transfer", rule.file_transfer),
+        "remote.audio" => ("audio", rule.audio),
+        "remote.drive_mapping" => ("drive_mapping", rule.drive_mapping),
+        _ => return None,
+    };
+
+    if allowed {
+        return Some(allow_result(
+            Some(format!("rules.remote_desktop_channels.{field}")),
+            Some(format!("remote desktop channel '{field}' is enabled")),
+            origin_profile_id,
+            posture,
+        ));
+    }
+
+    Some(deny_result(
+        Some(format!("rules.remote_desktop_channels.{field}")),
+        Some(format!("remote desktop channel '{field}' is disabled")),
+        origin_profile_id,
+        posture,
+    ))
+}
+
+fn evaluate_input_injection_rule(
+    rule: &InputInjectionRule,
+    target: &str,
+    posture: Option<PostureResult>,
+    origin_profile_id: Option<String>,
+) -> EvaluationResult {
+    if !rule.enabled {
+        return allow_result(None, None, origin_profile_id, posture);
+    }
+
+    if rule.allowed_types.is_empty() {
+        return deny_result(
+            Some("rules.input_injection.allowed_types".to_string()),
+            Some("input injection is not allowed when allowed_types is empty".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+
+    if rule.allowed_types.iter().any(|allowed| allowed == target) {
+        return allow_result(
+            Some("rules.input_injection.allowed_types".to_string()),
+            Some("input injection type is explicitly allowed".to_string()),
+            origin_profile_id,
+            posture,
+        );
+    }
+
+    deny_result(
+        Some("rules.input_injection.allowed_types".to_string()),
+        Some("input injection type is not allowed".to_string()),
+        origin_profile_id,
+        posture,
+    )
+}
+
+fn decision_rank(decision: &Decision) -> u8 {
+    match decision {
+        Decision::Allow => 1,
+        Decision::Warn => 2,
+        Decision::Deny => 3,
+    }
+}
+
+fn more_restrictive_result(left: EvaluationResult, right: EvaluationResult) -> EvaluationResult {
+    let left_rank = decision_rank(&left.decision);
+    let right_rank = decision_rank(&right.decision);
+    if right_rank > left_rank {
+        return right;
+    }
+    if left_rank > right_rank {
+        return left;
+    }
+
+    if right.matched_rule.is_some() {
+        right
+    } else {
+        left
+    }
+}
+
+struct ForbiddenPathOutcome {
+    denied: Option<EvaluationResult>,
+    exception_matched: bool,
+}
+
 fn evaluate_path_guards(
     spec: &HushSpec,
     target: &str,
@@ -617,21 +954,36 @@ fn evaluate_path_guards(
     origin_profile_id: Option<String>,
 ) -> Option<EvaluationResult> {
     let rules = spec.rules.as_ref()?;
+    let mut forbidden_exception_matched = false;
 
     if let Some(rule) = rules.forbidden_paths.as_ref() {
-        if let Some(result) =
-            evaluate_forbidden_paths(rule, target, posture.clone(), origin_profile_id.clone())
-        {
-            return Some(result);
+        let result =
+            evaluate_forbidden_paths(rule, target, posture.clone(), origin_profile_id.clone());
+        if let Some(denied) = result.denied {
+            return Some(denied);
         }
+        forbidden_exception_matched = result.exception_matched;
     }
 
-    if let Some(rule) = rules.path_allowlist.as_ref() {
-        if let Some(result) =
-            evaluate_path_allowlist(rule, target, operation, posture, origin_profile_id)
-        {
-            return Some(result);
-        }
+    if let Some(rule) = rules.path_allowlist.as_ref()
+        && let Some(result) = evaluate_path_allowlist(
+            rule,
+            target,
+            operation,
+            posture.clone(),
+            origin_profile_id.clone(),
+        )
+    {
+        return Some(result);
+    }
+
+    if forbidden_exception_matched {
+        return Some(allow_result(
+            Some("rules.forbidden_paths.exceptions".to_string()),
+            Some("path matched an explicit exception".to_string()),
+            origin_profile_id,
+            posture,
+        ));
     }
 
     None
@@ -642,30 +994,37 @@ fn evaluate_forbidden_paths(
     target: &str,
     posture: Option<PostureResult>,
     origin_profile_id: Option<String>,
-) -> Option<EvaluationResult> {
+) -> ForbiddenPathOutcome {
     if !rule.enabled {
-        return None;
+        return ForbiddenPathOutcome {
+            denied: None,
+            exception_matched: false,
+        };
     }
 
     if find_first_match(target, &rule.exceptions).is_some() {
-        return Some(allow_result(
-            Some("rules.forbidden_paths.exceptions".to_string()),
-            Some("path matched an explicit exception".to_string()),
-            origin_profile_id,
-            posture,
-        ));
+        return ForbiddenPathOutcome {
+            denied: None,
+            exception_matched: true,
+        };
     }
 
     if find_first_match(target, &rule.patterns).is_some() {
-        return Some(deny_result(
-            Some("rules.forbidden_paths.patterns".to_string()),
-            Some("path matched a forbidden pattern".to_string()),
-            origin_profile_id,
-            posture,
-        ));
+        return ForbiddenPathOutcome {
+            denied: Some(deny_result(
+                Some("rules.forbidden_paths.patterns".to_string()),
+                Some("path matched a forbidden pattern".to_string()),
+                origin_profile_id,
+                posture,
+            )),
+            exception_matched: false,
+        };
     }
 
-    None
+    ForbiddenPathOutcome {
+        denied: None,
+        exception_matched: false,
+    }
 }
 
 fn evaluate_path_allowlist(
@@ -721,10 +1080,20 @@ fn posture_capability_guard(
         .extensions
         .as_ref()
         .and_then(|extensions| extensions.posture.as_ref())?;
-    let current_state = posture_extension.states.get(&posture_result.current)?;
-
-    let Some(capability) = required_capability(action.action_type.as_str()) else {
-        return None;
+    let capability = required_capability(action.action_type.as_str())?;
+    let Some(current_state) = posture_extension.states.get(&posture_result.current) else {
+        return Some(deny_result(
+            Some(format!(
+                "extensions.posture.states.{}",
+                posture_result.current
+            )),
+            Some(format!(
+                "unknown posture state '{}'",
+                posture_result.current
+            )),
+            origin_profile_id.clone(),
+            Some(posture_result.clone()),
+        ));
     };
 
     if current_state
@@ -898,10 +1267,6 @@ fn trigger_name(trigger: &TransitionTrigger) -> &'static str {
     }
 }
 
-fn prefixed_rule(prefix: Option<&str>, suffix: &str) -> Option<String> {
-    prefix.map(|prefix| format!("{prefix}.{suffix}"))
-}
-
 fn profile_rule_prefix(profile_id: &str, field: &str) -> String {
     format!("extensions.origins.profiles.{profile_id}.{field}")
 }
@@ -958,7 +1323,7 @@ fn find_first_match(target: &str, patterns: &[String]) -> Option<usize> {
         .find_map(|(index, pattern)| glob_matches(pattern, target).then_some(index))
 }
 
-fn glob_matches(pattern: &str, target: &str) -> bool {
+pub fn glob_matches(pattern: &str, target: &str) -> bool {
     let mut regex = String::from("^");
     let mut chars = pattern.chars().peekable();
     while let Some(ch) = chars.next() {

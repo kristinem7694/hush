@@ -5,7 +5,6 @@ use crate::extensions::{
 use crate::rules::Rules;
 use crate::schema::{HushSpec, MergeStrategy};
 
-/// Merge a base HushSpec with a child according to the child's merge strategy.
 #[must_use = "merged spec is returned, not applied in place"]
 pub fn merge(base: &HushSpec, child: &HushSpec) -> HushSpec {
     let strategy = child.merge_strategy.unwrap_or_default();
@@ -36,6 +35,7 @@ fn merge_with_strategy(base: &HushSpec, child: &HushSpec, deep: bool) -> HushSpe
         } else {
             merge_extensions_merge(&base.extensions, &child.extensions)
         },
+        metadata: child.metadata.clone().or_else(|| base.metadata.clone()),
     }
 }
 

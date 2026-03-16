@@ -61,14 +61,35 @@ const (
 	DetectionLevelCritical   DetectionLevel = "critical"
 )
 
+type Classification string
+
+const (
+	ClassificationPublic       Classification = "public"
+	ClassificationInternal     Classification = "internal"
+	ClassificationConfidential Classification = "confidential"
+	ClassificationRestricted   Classification = "restricted"
+)
+
+type LifecycleState string
+
+const (
+	LifecycleStateDraft      LifecycleState = "draft"
+	LifecycleStateReview     LifecycleState = "review"
+	LifecycleStateApproved   LifecycleState = "approved"
+	LifecycleStateDeployed   LifecycleState = "deployed"
+	LifecycleStateDeprecated LifecycleState = "deprecated"
+	LifecycleStateArchived   LifecycleState = "archived"
+)
+
 type HushSpec struct {
-	HushSpecVersion string        `yaml:"hushspec" json:"hushspec"`
-	Name            string        `yaml:"name,omitempty" json:"name,omitempty"`
-	Description     string        `yaml:"description,omitempty" json:"description,omitempty"`
-	Extends         string        `yaml:"extends,omitempty" json:"extends,omitempty"`
-	MergeStrategy   MergeStrategy `yaml:"merge_strategy,omitempty" json:"merge_strategy,omitempty"`
-	Rules           *Rules        `yaml:"rules,omitempty" json:"rules,omitempty"`
-	Extensions      *Extensions   `yaml:"extensions,omitempty" json:"extensions,omitempty"`
+	HushSpecVersion string              `yaml:"hushspec" json:"hushspec"`
+	Name            string              `yaml:"name,omitempty" json:"name,omitempty"`
+	Description     string              `yaml:"description,omitempty" json:"description,omitempty"`
+	Extends         string              `yaml:"extends,omitempty" json:"extends,omitempty"`
+	MergeStrategy   MergeStrategy       `yaml:"merge_strategy,omitempty" json:"merge_strategy,omitempty"`
+	Rules           *Rules              `yaml:"rules,omitempty" json:"rules,omitempty"`
+	Extensions      *Extensions         `yaml:"extensions,omitempty" json:"extensions,omitempty"`
+	Metadata        *GovernanceMetadata `yaml:"metadata,omitempty" json:"metadata,omitempty"`
 }
 
 type Rules struct {
@@ -264,4 +285,16 @@ type ThreatIntelDetection struct {
 	PatternDB           *string  `yaml:"pattern_db,omitempty" json:"pattern_db,omitempty"`
 	SimilarityThreshold *float64 `yaml:"similarity_threshold,omitempty" json:"similarity_threshold,omitempty"`
 	TopK                *int     `yaml:"top_k,omitempty" json:"top_k,omitempty"`
+}
+
+type GovernanceMetadata struct {
+	Author         string         `yaml:"author,omitempty" json:"author,omitempty"`
+	ApprovedBy     string         `yaml:"approved_by,omitempty" json:"approved_by,omitempty"`
+	ApprovalDate   string         `yaml:"approval_date,omitempty" json:"approval_date,omitempty"`
+	Classification Classification `yaml:"classification,omitempty" json:"classification,omitempty"`
+	ChangeTicket   string         `yaml:"change_ticket,omitempty" json:"change_ticket,omitempty"`
+	LifecycleState LifecycleState `yaml:"lifecycle_state,omitempty" json:"lifecycle_state,omitempty"`
+	PolicyVersion  *int           `yaml:"policy_version,omitempty" json:"policy_version,omitempty"`
+	EffectiveDate  string         `yaml:"effective_date,omitempty" json:"effective_date,omitempty"`
+	ExpiryDate     string         `yaml:"expiry_date,omitempty" json:"expiry_date,omitempty"`
 }

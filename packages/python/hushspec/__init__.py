@@ -1,5 +1,26 @@
-"""HushSpec: Portable specification for AI agent security rules."""
-
+from hushspec.evaluate import (
+    Decision,
+    EvaluationAction,
+    EvaluationResult,
+    OriginContext,
+    PostureContext,
+    PostureResult,
+    activate_panic,
+    check_panic_sentinel,
+    deactivate_panic,
+    evaluate,
+    is_panic_active,
+    panic_policy,
+)
+from hushspec.receipt import (
+    ActionSummary,
+    AuditConfig,
+    DecisionReceipt,
+    PolicySummary,
+    RuleEvaluation,
+    compute_policy_hash,
+    evaluate_audited,
+)
 from hushspec.extensions import (
     BridgePolicy,
     BridgeTarget,
@@ -21,6 +42,41 @@ from hushspec.extensions import (
     TransitionTrigger,
 )
 from hushspec.merge import merge
+from hushspec.middleware import HushGuard, HushSpecDenied
+from hushspec.observer import (
+    ConsoleObserver,
+    EvaluationObserver,
+    JsonLineObserver,
+    MetricsCollector,
+    ObservableEvaluator,
+)
+from hushspec.sinks import (
+    CallbackSink,
+    FileReceiptSink,
+    FilteredSink,
+    MultiSink,
+    NullSink,
+    ReceiptSink,
+    StderrReceiptSink,
+)
+from hushspec.detection import (
+    DetectionCategory,
+    DetectionConfig,
+    DetectionResult,
+    DetectorRegistry,
+    EvaluationWithDetection,
+    MatchedPattern,
+    RegexExfiltrationDetector,
+    RegexInjectionDetector,
+    evaluate_with_detection,
+)
+from hushspec.conditions import (
+    Condition,
+    RuntimeContext,
+    TimeWindowCondition,
+    evaluate_condition,
+    evaluate_with_context,
+)
 from hushspec.parse import parse, parse_or_raise
 from hushspec.resolve import LoadedSpec, resolve, resolve_file, resolve_or_raise
 from hushspec.rules import (
@@ -40,17 +96,18 @@ from hushspec.rules import (
     ShellCommandsRule,
     ToolAccessRule,
 )
-from hushspec.schema import HushSpec, MergeStrategy
-from hushspec.validate import ValidationError, ValidationResult, validate
+from hushspec.schema import Classification, GovernanceMetadata, HushSpec, LifecycleState, MergeStrategy
+from hushspec.validate import ValidationError, ValidationResult, is_safe_regex, validate
 from hushspec.version import HUSHSPEC_VERSION, SUPPORTED_VERSIONS, is_supported
 
 __version__ = HUSHSPEC_VERSION
 
 __all__ = [
-    # Schema
     "HushSpec",
     "MergeStrategy",
-    # Rules
+    "GovernanceMetadata",
+    "Classification",
+    "LifecycleState",
     "Rules",
     "ForbiddenPathsRule",
     "PathAllowlistRule",
@@ -66,7 +123,6 @@ __all__ = [
     "InputInjectionRule",
     "Severity",
     "DefaultAction",
-    # Extensions
     "Extensions",
     "PostureExtension",
     "PostureState",
@@ -85,20 +141,64 @@ __all__ = [
     "PromptInjectionDetection",
     "JailbreakDetection",
     "ThreatIntelDetection",
-    # Parse
     "parse",
     "parse_or_raise",
-    # Validate
     "validate",
     "ValidationResult",
     "ValidationError",
-    # Merge
+    "is_safe_regex",
     "merge",
     "resolve",
     "resolve_file",
     "resolve_or_raise",
     "LoadedSpec",
-    # Version
+    "Condition",
+    "TimeWindowCondition",
+    "RuntimeContext",
+    "evaluate_condition",
+    "evaluate_with_context",
+    "evaluate",
+    "Decision",
+    "EvaluationAction",
+    "EvaluationResult",
+    "OriginContext",
+    "PostureContext",
+    "PostureResult",
+    "activate_panic",
+    "deactivate_panic",
+    "is_panic_active",
+    "panic_policy",
+    "check_panic_sentinel",
+    "evaluate_audited",
+    "compute_policy_hash",
+    "DecisionReceipt",
+    "ActionSummary",
+    "RuleEvaluation",
+    "PolicySummary",
+    "AuditConfig",
+    "ReceiptSink",
+    "FileReceiptSink",
+    "StderrReceiptSink",
+    "FilteredSink",
+    "MultiSink",
+    "CallbackSink",
+    "NullSink",
+    "HushGuard",
+    "HushSpecDenied",
+    "EvaluationObserver",
+    "ObservableEvaluator",
+    "JsonLineObserver",
+    "ConsoleObserver",
+    "MetricsCollector",
+    "DetectionCategory",
+    "DetectionConfig",
+    "DetectionResult",
+    "DetectorRegistry",
+    "EvaluationWithDetection",
+    "MatchedPattern",
+    "RegexExfiltrationDetector",
+    "RegexInjectionDetector",
+    "evaluate_with_detection",
     "HUSHSPEC_VERSION",
     "SUPPORTED_VERSIONS",
     "is_supported",

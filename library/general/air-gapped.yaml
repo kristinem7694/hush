@@ -1,0 +1,65 @@
+# Does not replace OS-level network controls or firewall rules.
+hushspec: "0.1.0"
+name: air-gapped
+description: >
+  Zero-network policy. Blocks all egress, all shell commands, and restricts
+  tools to read-only filesystem operations.
+
+rules:
+  egress:
+    allow: []
+    block: []
+    default: block
+
+  shell_commands:
+    forbidden_patterns:
+      - ".*"
+
+  tool_access:
+    allow:
+      - read_file
+      - list_directory
+      - search
+      - grep
+    block: []
+    require_confirmation: []
+    default: block
+    max_args_size: 524288
+
+  forbidden_paths:
+    patterns:
+      - "**/.ssh/**"
+      - "**/.aws/**"
+      - "**/.env"
+      - "**/.env.*"
+      - "**/.git-credentials"
+      - "**/.gnupg/**"
+      - "**/.kube/**"
+      - "**/.docker/**"
+      - "**/.npmrc"
+      - "**/.password-store/**"
+      - "**/.1password/**"
+      - "/etc/shadow"
+      - "/etc/passwd"
+      - "/etc/sudoers"
+    exceptions: []
+
+  secret_patterns:
+    patterns:
+      - name: aws_access_key
+        pattern: "AKIA[0-9A-Z]{16}"
+        severity: critical
+      - name: private_key
+        pattern: "-----BEGIN\\s+(RSA\\s+)?PRIVATE\\s+KEY-----"
+        severity: critical
+      - name: generic_api_key
+        pattern: "(?i)(api[_\\-]?key|apikey)\\s*[:=]\\s*[A-Za-z0-9]{32,}"
+        severity: error
+    skip_paths: []
+
+  patch_integrity:
+    max_additions: 0
+    max_deletions: 0
+    require_balance: false
+    max_imbalance_ratio: 1.0
+    forbidden_patterns: []

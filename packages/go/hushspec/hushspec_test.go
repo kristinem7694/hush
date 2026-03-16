@@ -100,6 +100,94 @@ extensions:
 	}
 }
 
+func TestParseDefaultsEgressEnabledToTrueWhenOmitted(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+rules:
+  egress:
+    allow: ["api.example.com"]
+    default: block
+`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spec.Rules == nil || spec.Rules.Egress == nil {
+		t.Fatal("expected egress rule to parse")
+	}
+	if !spec.Rules.Egress.Enabled {
+		t.Fatal("expected omitted egress.enabled to default to true")
+	}
+}
+
+func TestParseDefaultsCoreRuleEnabledFlagsAndPatchLimits(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+rules:
+  forbidden_paths:
+    patterns: ["**/.ssh/**"]
+  tool_access:
+    block: ["shell_exec"]
+    default: allow
+  patch_integrity:
+    forbidden_patterns: []
+`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spec.Rules == nil {
+		t.Fatal("expected rules to parse")
+	}
+	if spec.Rules.ForbiddenPaths == nil || !spec.Rules.ForbiddenPaths.Enabled {
+		t.Fatal("expected omitted forbidden_paths.enabled to default to true")
+	}
+	if spec.Rules.ToolAccess == nil || !spec.Rules.ToolAccess.Enabled {
+		t.Fatal("expected omitted tool_access.enabled to default to true")
+	}
+	if spec.Rules.PatchIntegrity == nil {
+		t.Fatal("expected patch_integrity rule to parse")
+	}
+	if !spec.Rules.PatchIntegrity.Enabled {
+		t.Fatal("expected omitted patch_integrity.enabled to default to true")
+	}
+	if spec.Rules.PatchIntegrity.MaxAdditions != 1000 {
+		t.Fatalf("expected omitted max_additions to default to 1000, got %d", spec.Rules.PatchIntegrity.MaxAdditions)
+	}
+	if spec.Rules.PatchIntegrity.MaxDeletions != 500 {
+		t.Fatalf("expected omitted max_deletions to default to 500, got %d", spec.Rules.PatchIntegrity.MaxDeletions)
+	}
+}
+
+func TestParseDefaultsOriginProfileNestedRuleEnabledFlags(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+extensions:
+  origins:
+    profiles:
+      - id: slack
+        match:
+          provider: slack
+        tool_access:
+          allow: [github_search]
+          default: block
+        egress:
+          allow: ["api.github.com"]
+          default: block
+`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spec.Extensions == nil || spec.Extensions.Origins == nil || len(spec.Extensions.Origins.Profiles) != 1 {
+		t.Fatal("expected origins profile to parse")
+	}
+	profile := spec.Extensions.Origins.Profiles[0]
+	if profile.ToolAccess == nil || !profile.ToolAccess.Enabled {
+		t.Fatal("expected omitted origins.profile.tool_access.enabled to default to true")
+	}
+	if profile.Egress == nil || !profile.Egress.Enabled {
+		t.Fatal("expected omitted origins.profile.egress.enabled to default to true")
+	}
+}
+
 func TestValidateDuplicatePatternNames(t *testing.T) {
 	spec := &HushSpec{
 		HushSpecVersion: "0.1.0",

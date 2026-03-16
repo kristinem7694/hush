@@ -1,5 +1,3 @@
-# HushSpec Permissive Ruleset
-# Development-friendly: allows all egress and relaxes limits
 hushspec: "0.1.0"
 name: permissive
 description: Permissive rules for development (use with caution)

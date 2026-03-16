@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { HushSpec } from './schema.js';
 import { merge } from './merge.js';
 import { parse } from './parse.js';
+import { loadBuiltin } from './builtin.js';
 
 export interface LoadedSpec {
   source: string;
@@ -20,7 +21,7 @@ export interface ResolveOptions {
 
 export function resolve(spec: HushSpec, options: ResolveOptions = {}): ResolveResult {
   const stack = options.source ? [options.source] : [];
-  const load = options.load ?? loadFromFilesystem;
+  const load = options.load ?? createCompositeLoader();
   return resolveInner(spec, options.source, load, stack);
 }
 
@@ -33,7 +34,41 @@ export function resolveFromFile(filePath: string): ResolveResult {
       error: `Failed to parse HushSpec at ${source}: ${parsed.error}`,
     };
   }
-  return resolve(parsed.value, { source, load: loadFromFilesystem });
+  return resolve(parsed.value, { source, load: createCompositeLoader() });
+}
+
+export function createCompositeLoader(): (reference: string, from?: string) => LoadedSpec {
+  return (reference: string, from?: string): LoadedSpec => {
+    if (reference.startsWith('builtin:')) {
+      return loadBuiltinOrThrow(reference);
+    }
+
+    if (reference.startsWith('https://') || reference.startsWith('http://')) {
+      throw new Error(
+        `HTTP-based policy loading is not supported in the synchronous loader; ` +
+          `use createHttpLoader() for '${reference}'`,
+      );
+    }
+
+    // Bare name without dots/slashes: try as builtin first
+    if (!reference.includes('/') && !reference.includes('\\') && !reference.includes('.')) {
+      const spec = loadBuiltin(reference);
+      if (spec) {
+        const source = `builtin:${reference}`;
+        return { source, spec };
+      }
+    }
+
+    return loadFromFilesystem(reference, from);
+  };
+}
+
+function loadBuiltinOrThrow(reference: string): LoadedSpec {
+  const spec = loadBuiltin(reference);
+  if (!spec) {
+    throw new Error(`unknown builtin ruleset '${reference}'`);
+  }
+  return { source: reference, spec };
 }
 
 function resolveInner(

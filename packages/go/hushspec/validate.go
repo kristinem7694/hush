@@ -3,38 +3,33 @@ package hushspec
 import (
 	"fmt"
 	"regexp"
+	"time"
 )
 
-// ValidationResult holds the outcome of validating a HushSpec document.
 type ValidationResult struct {
 	Errors   []ValidationError
 	Warnings []string
 }
 
-// ValidationError represents a single validation failure.
 type ValidationError struct {
 	Code    string
 	Message string
 }
 
-// IsValid returns true when no validation errors were found.
 func (r *ValidationResult) IsValid() bool {
 	return len(r.Errors) == 0
 }
 
-// addError is a helper for appending a validation error.
 func (r *ValidationResult) addError(code, msg string) {
 	r.Errors = append(r.Errors, ValidationError{Code: code, Message: msg})
 }
 
-// addWarning is a helper for appending a warning.
 func (r *ValidationResult) addWarning(msg string) {
 	r.Warnings = append(r.Warnings, msg)
 }
 
-// Validate performs structural validation of a parsed HushSpec document.
-// It checks version support, cross-field constraints, and internal
-// consistency of rules and extensions.
+// Validate checks version support, cross-field constraints, regex syntax,
+// and extension consistency. Returns errors and advisory warnings.
 func Validate(spec *HushSpec) *ValidationResult {
 	result := &ValidationResult{}
 
@@ -57,7 +52,35 @@ func Validate(spec *HushSpec) *ValidationResult {
 		validateExtensions(spec.Extensions, result)
 	}
 
+	validateGovernance(spec, result)
+
 	return result
+}
+
+func validateGovernance(spec *HushSpec, result *ValidationResult) {
+	if spec.Metadata == nil {
+		return
+	}
+	m := spec.Metadata
+
+	if m.LifecycleState == LifecycleStateDeprecated || m.LifecycleState == LifecycleStateArchived {
+		result.addWarning(fmt.Sprintf("policy lifecycle state is '%s'", m.LifecycleState))
+	}
+
+	if m.ExpiryDate != "" {
+		today := currentDateISO()
+		if m.ExpiryDate < today {
+			result.addWarning(fmt.Sprintf("policy expiry_date '%s' is in the past", m.ExpiryDate))
+		}
+	}
+
+	if m.ApprovedBy != "" && m.ApprovalDate == "" {
+		result.addWarning("approved_by is set but approval_date is missing")
+	}
+
+	if m.Classification == ClassificationRestricted && m.ApprovedBy == "" {
+		result.addWarning("classification is 'restricted' but no approved_by is set")
+	}
 }
 
 func validateRules(rules *Rules, result *ValidationResult) {
@@ -73,7 +96,7 @@ func validateRules(rules *Rules, result *ValidationResult) {
 					fmt.Sprintf("duplicate secret pattern name %q", pattern.Name))
 			}
 			seen[pattern.Name] = true
-			if !containsString(string(pattern.Severity), Severities) {
+			if !containsTyped(string(pattern.Severity), Severities) {
 				result.addError("INVALID_SEVERITY",
 					fmt.Sprintf("secret_patterns.patterns.%s.severity %q must be critical, error, or warn", pattern.Name, pattern.Severity))
 			}
@@ -192,7 +215,7 @@ func validatePosture(posture *PostureExtension, result *ValidationResult) {
 				fmt.Sprintf("posture.transitions[%d].to %q does not reference a defined state", index, transition.To))
 		}
 
-		if !isKnownTransitionTrigger(transition.On) {
+		if !containsTyped(transition.On, TransitionTriggers) {
 			result.addError("INVALID_TRANSITION_TRIGGER",
 				fmt.Sprintf("posture.transitions[%d].on %q is not a valid trigger", index, transition.On))
 		}
@@ -239,11 +262,11 @@ func validateOrigins(ext *Extensions, result *ValidationResult) {
 		seen[profile.ID] = true
 
 		if profile.Match != nil {
-			if profile.Match.SpaceType != "" && !containsString(profile.Match.SpaceType, OriginSpaceTypes) {
+			if profile.Match.SpaceType != "" && !containsTyped(profile.Match.SpaceType, OriginSpaceTypes) {
 				result.addError("INVALID_ORIGIN_SPACE_TYPE",
 					fmt.Sprintf("origins.profiles[%d].match.space_type %q is not valid", index, profile.Match.SpaceType))
 			}
-			if profile.Match.Visibility != "" && !containsString(profile.Match.Visibility, OriginVisibilities) {
+			if profile.Match.Visibility != "" && !containsTyped(profile.Match.Visibility, OriginVisibilities) {
 				result.addError("INVALID_ORIGIN_VISIBILITY",
 					fmt.Sprintf("origins.profiles[%d].match.visibility %q is not valid", index, profile.Match.Visibility))
 			}
@@ -270,11 +293,11 @@ func validateOrigins(ext *Extensions, result *ValidationResult) {
 
 		if profile.Bridge != nil {
 			for targetIndex, target := range profile.Bridge.AllowedTargets {
-				if target.SpaceType != "" && !containsString(target.SpaceType, OriginSpaceTypes) {
+				if target.SpaceType != "" && !containsTyped(target.SpaceType, OriginSpaceTypes) {
 					result.addError("INVALID_BRIDGE_SPACE_TYPE",
 						fmt.Sprintf("origins.profiles[%d].bridge.allowed_targets[%d].space_type %q is not valid", index, targetIndex, target.SpaceType))
 				}
-				if target.Visibility != "" && !containsString(target.Visibility, OriginVisibilities) {
+				if target.Visibility != "" && !containsTyped(target.Visibility, OriginVisibilities) {
 					result.addError("INVALID_BRIDGE_VISIBILITY",
 						fmt.Sprintf("origins.profiles[%d].bridge.allowed_targets[%d].visibility %q is not valid", index, targetIndex, target.Visibility))
 				}
@@ -286,11 +309,11 @@ func validateOrigins(ext *Extensions, result *ValidationResult) {
 func validateDetection(detection *DetectionExtension, result *ValidationResult) {
 	if detection.PromptInjection != nil {
 		prompt := detection.PromptInjection
-		if prompt.WarnAtOrAbove != nil && !isKnownDetectionLevel(*prompt.WarnAtOrAbove) {
+		if prompt.WarnAtOrAbove != nil && !containsTyped(*prompt.WarnAtOrAbove, DetectionLevels) {
 			result.addError("INVALID_DETECTION_LEVEL",
 				fmt.Sprintf("detection.prompt_injection.warn_at_or_above %q is not valid", *prompt.WarnAtOrAbove))
 		}
-		if prompt.BlockAtOrAbove != nil && !isKnownDetectionLevel(*prompt.BlockAtOrAbove) {
+		if prompt.BlockAtOrAbove != nil && !containsTyped(*prompt.BlockAtOrAbove, DetectionLevels) {
 			result.addError("INVALID_DETECTION_LEVEL",
 				fmt.Sprintf("detection.prompt_injection.block_at_or_above %q is not valid", *prompt.BlockAtOrAbove))
 		}
@@ -306,7 +329,7 @@ func validateDetection(detection *DetectionExtension, result *ValidationResult) 
 		if prompt.BlockAtOrAbove != nil {
 			blockLevel = *prompt.BlockAtOrAbove
 		}
-		if isKnownDetectionLevel(warnLevel) && isKnownDetectionLevel(blockLevel) && detectionRank(blockLevel) < detectionRank(warnLevel) {
+		if containsTyped(warnLevel, DetectionLevels) && containsTyped(blockLevel, DetectionLevels) && detectionRank(blockLevel) < detectionRank(warnLevel) {
 			result.addWarning("detection.prompt_injection: block_at_or_above is less strict than warn_at_or_above")
 		}
 	}
@@ -356,6 +379,8 @@ func validateOptionalNonNegativeInt(value *int, code, msg string, result *Valida
 	}
 }
 
+// validateRegex rejects non-RE2 patterns. Go's regexp is RE2-only, so any
+// pattern that compiles is inherently ReDoS-safe.
 func validateRegex(pattern, path string, result *ValidationResult) {
 	if _, err := regexp.Compile(pattern); err != nil {
 		result.addError("INVALID_REGEX",
@@ -381,22 +406,9 @@ func isKnownBudgetKey(value string) bool {
 	}
 }
 
-func isKnownTransitionTrigger(value TransitionTrigger) bool {
-	return containsTyped(value, TransitionTriggers)
-}
-
 func isValidDuration(value string) bool {
 	matched, _ := regexp.MatchString(`^\d+[smhd]$`, value)
 	return matched
-}
-
-func isKnownDetectionLevel(value DetectionLevel) bool {
-	return containsTyped(value, DetectionLevels)
-}
-
-func containsString(value string, allowed map[string]struct{}) bool {
-	_, ok := allowed[value]
-	return ok
 }
 
 func containsTyped[T comparable](value T, allowed map[T]struct{}) bool {
@@ -417,4 +429,8 @@ func detectionRank(value DetectionLevel) int {
 	default:
 		return -1
 	}
+}
+
+func currentDateISO() string {
+	return time.Now().UTC().Format("2006-01-02")
 }

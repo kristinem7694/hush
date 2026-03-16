@@ -1,5 +1,3 @@
-"""Resolve ``extends`` chains for parsed HushSpec documents."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -26,7 +24,6 @@ def resolve(
     source: str | None = None,
     loader: Resolver | None = None,
 ) -> tuple[bool, HushSpec | str]:
-    """Resolve ``extends`` recursively using the supplied loader or the filesystem."""
     stack = [source] if source is not None else []
     return _resolve_inner(spec, source, loader or _load_from_filesystem, stack)
 
@@ -44,7 +41,6 @@ def resolve_or_raise(
 
 
 def resolve_file(path: str | Path) -> tuple[bool, HushSpec | str]:
-    """Load and resolve a HushSpec document from disk."""
     source = str(Path(path).resolve())
     try:
         content = Path(source).read_text()

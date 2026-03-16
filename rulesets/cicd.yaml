@@ -1,5 +1,3 @@
-# HushSpec CI/CD Ruleset
-# Optimized for build pipelines and CI/CD
 hushspec: "0.1.0"
 name: cicd
 description: Security rules for CI/CD pipelines

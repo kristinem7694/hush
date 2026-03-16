@@ -1,5 +1,3 @@
-# HushSpec Default Ruleset
-# Balanced security for AI agent execution
 hushspec: "0.1.0"
 name: default
 description: Default security rules for AI agent execution
@@ -12,36 +10,30 @@ rules:
       - "**/id_rsa*"
       - "**/id_ed25519*"
       - "**/id_ecdsa*"
-      # AWS credentials
+      # Cloud/infra credentials
       - "**/.aws/**"
+      - "**/.gnupg/**"
+      - "**/.kube/**"
+      - "**/.docker/**"
+      - "**/.npmrc"
       # Environment files
       - "**/.env"
       - "**/.env.*"
       # Git credentials
       - "**/.git-credentials"
       - "**/.gitconfig"
-      # GPG keys
-      - "**/.gnupg/**"
-      # Kubernetes
-      - "**/.kube/**"
-      # Docker
-      - "**/.docker/**"
-      # NPM tokens
-      - "**/.npmrc"
       # Password stores
       - "**/.password-store/**"
       - "**/pass/**"
-      # 1Password
       - "**/.1password/**"
-      # System paths (Unix)
+      # Unix system paths
       - "/etc/shadow"
       - "/etc/passwd"
       - "/etc/sudoers"
-      # Windows credential stores
+      # Windows credentials and registry hives
       - "**/AppData/Roaming/Microsoft/Credentials/**"
       - "**/AppData/Local/Microsoft/Credentials/**"
       - "**/AppData/Roaming/Microsoft/Vault/**"
-      # Windows registry hives
       - "**/NTUSER.DAT"
       - "**/Windows/System32/config/SAM"
       - "**/Windows/System32/config/SECURITY"
@@ -50,14 +42,11 @@ rules:
 
   egress:
     allow:
-      # AI APIs
       - "*.openai.com"
       - "*.anthropic.com"
-      # Code hosting
       - "api.github.com"
       - "github.com"
       - "*.githubusercontent.com"
-      # Package registries
       - "*.npmjs.org"
       - "registry.npmjs.org"
       - "pypi.org"

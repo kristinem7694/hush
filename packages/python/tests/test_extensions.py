@@ -1,8 +1,3 @@
-"""Tests for posture, origins, detection parsing and validation.
-
-Mirrors the Rust/TS extension test cases.
-"""
-
 from hushspec import (
     HushSpec,
     OriginDefaultBehavior,

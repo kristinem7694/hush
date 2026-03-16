@@ -43,6 +43,20 @@ class DetectionLevel(str, Enum):
     HIGH = 'high'
     CRITICAL = 'critical'
 
+class Classification(str, Enum):
+    PUBLIC = 'public'
+    INTERNAL = 'internal'
+    CONFIDENTIAL = 'confidential'
+    RESTRICTED = 'restricted'
+
+class LifecycleState(str, Enum):
+    DRAFT = 'draft'
+    REVIEW = 'review'
+    APPROVED = 'approved'
+    DEPLOYED = 'deployed'
+    DEPRECATED = 'deprecated'
+    ARCHIVED = 'archived'
+
 @dataclass
 class HushSpec:
     hushspec: str
@@ -52,6 +66,7 @@ class HushSpec:
     merge_strategy: MergeStrategy | None = None
     rules: Rules | None = None
     extensions: Extensions | None = None
+    metadata: GovernanceMetadata | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> HushSpec:
@@ -63,6 +78,7 @@ class HushSpec:
             merge_strategy=(MergeStrategy(data.get('merge_strategy')) if data.get('merge_strategy') is not None else None),
             rules=(Rules.from_dict(data.get('rules')) if data.get('rules') is not None else None),
             extensions=(Extensions.from_dict(data.get('extensions')) if data.get('extensions') is not None else None),
+            metadata=(GovernanceMetadata.from_dict(data.get('metadata')) if data.get('metadata') is not None else None),
         )
 
     def to_dict(self) -> dict:
@@ -80,6 +96,8 @@ class HushSpec:
             data['rules'] = self.rules.to_dict()
         if self.extensions is not None:
             data['extensions'] = self.extensions.to_dict()
+        if self.metadata is not None:
+            data['metadata'] = self.metadata.to_dict()
         return data
 
 @dataclass
@@ -823,4 +841,52 @@ class ThreatIntelDetection:
             data['similarity_threshold'] = self.similarity_threshold
         if self.top_k is not None:
             data['top_k'] = self.top_k
+        return data
+
+@dataclass
+class GovernanceMetadata:
+    author: str | None = None
+    approved_by: str | None = None
+    approval_date: str | None = None
+    classification: Classification | None = None
+    change_ticket: str | None = None
+    lifecycle_state: LifecycleState | None = None
+    policy_version: int | None = None
+    effective_date: str | None = None
+    expiry_date: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> GovernanceMetadata:
+        return cls(
+            author=(data.get('author') if data.get('author') is not None else None),
+            approved_by=(data.get('approved_by') if data.get('approved_by') is not None else None),
+            approval_date=(data.get('approval_date') if data.get('approval_date') is not None else None),
+            classification=(Classification(data.get('classification')) if data.get('classification') is not None else None),
+            change_ticket=(data.get('change_ticket') if data.get('change_ticket') is not None else None),
+            lifecycle_state=(LifecycleState(data.get('lifecycle_state')) if data.get('lifecycle_state') is not None else None),
+            policy_version=(data.get('policy_version') if data.get('policy_version') is not None else None),
+            effective_date=(data.get('effective_date') if data.get('effective_date') is not None else None),
+            expiry_date=(data.get('expiry_date') if data.get('expiry_date') is not None else None),
+        )
+
+    def to_dict(self) -> dict:
+        data: dict = {}
+        if self.author is not None:
+            data['author'] = self.author
+        if self.approved_by is not None:
+            data['approved_by'] = self.approved_by
+        if self.approval_date is not None:
+            data['approval_date'] = self.approval_date
+        if self.classification is not None:
+            data['classification'] = self.classification.value
+        if self.change_ticket is not None:
+            data['change_ticket'] = self.change_ticket
+        if self.lifecycle_state is not None:
+            data['lifecycle_state'] = self.lifecycle_state.value
+        if self.policy_version is not None:
+            data['policy_version'] = self.policy_version
+        if self.effective_date is not None:
+            data['effective_date'] = self.effective_date
+        if self.expiry_date is not None:
+            data['expiry_date'] = self.expiry_date
         return data

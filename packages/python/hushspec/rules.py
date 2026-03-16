@@ -1,5 +1,3 @@
-"""Generated HushSpec core rule exports."""
-
 from hushspec.generated_models import (
     ComputerUseMode,
     ComputerUseRule,

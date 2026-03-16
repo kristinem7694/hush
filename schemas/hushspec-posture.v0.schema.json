@@ -34,8 +34,7 @@
       "description": "A named state in the posture state machine.",
       "properties": {
         "description": {
-          "type": "string",
-          "description": "Human-readable description of this state."
+          "type": "string"
         },
         "capabilities": {
           "type": "array",

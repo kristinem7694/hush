@@ -10,12 +10,6 @@ import type {
   ThreatIntelDetection,
 } from './extensions.js';
 
-/**
- * Merge a base HushSpec with a child according to the child's merge strategy.
- *
- * Returns a new HushSpec combining base and child fields.
- * Does not modify either input.
- */
 export function merge(base: HushSpec, child: HushSpec): HushSpec {
   const strategy: MergeStrategy = child.merge_strategy ?? 'deep_merge';
 
