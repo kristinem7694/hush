@@ -73,6 +73,7 @@ class DetectorRegistry:
     def with_defaults(cls) -> "DetectorRegistry":
         registry = cls()
         registry.register(RegexInjectionDetector())
+        registry.register(RegexJailbreakDetector())
         registry.register(RegexExfiltrationDetector())
         return registry
 
@@ -142,15 +143,6 @@ class RegexInjectionDetector(Detector):
                 category=DetectionCategory.PROMPT_INJECTION,
             ),
             _DetectionPattern(
-                name="jailbreak_dan",
-                regex=re.compile(
-                    r"(DAN|do\s+anything\s+now|developer\s+mode|jailbreak)",
-                    re.IGNORECASE,
-                ),
-                weight=0.5,
-                category=DetectionCategory.JAILBREAK,
-            ),
-            _DetectionPattern(
                 name="delimiter_injection",
                 regex=re.compile(
                     r"(---+|===+|```)\s*(system|assistant|user)\s*[:\n]",
@@ -200,7 +192,64 @@ class RegexInjectionDetector(Detector):
         if matched_patterns:
             names = ", ".join(p.name for p in matched_patterns)
             explanation = (
-                f"matched {len(matched_patterns)} injection/jailbreak pattern(s): {names}"
+                f"matched {len(matched_patterns)} injection pattern(s): {names}"
+            )
+
+        return DetectionResult(
+            detector_name=self.name,
+            category=self.category,
+            score=score,
+            matched_patterns=matched_patterns,
+            explanation=explanation,
+        )
+
+
+class RegexJailbreakDetector(Detector):
+
+    def __init__(self) -> None:
+        self._patterns: list[_DetectionPattern] = [
+            _DetectionPattern(
+                name="jailbreak_dan",
+                regex=re.compile(
+                    r"(DAN|do\s+anything\s+now|developer\s+mode|jailbreak)",
+                    re.IGNORECASE,
+                ),
+                weight=0.5,
+                category=DetectionCategory.JAILBREAK,
+            ),
+        ]
+
+    @property
+    def name(self) -> str:
+        return "regex_jailbreak"
+
+    @property
+    def category(self) -> DetectionCategory:
+        return DetectionCategory.JAILBREAK
+
+    def detect(self, input_text: str) -> DetectionResult:
+        matched_patterns: list[MatchedPattern] = []
+        total_weight = 0.0
+
+        for pattern in self._patterns:
+            m = pattern.regex.search(input_text)
+            if m:
+                total_weight += pattern.weight
+                matched_patterns.append(
+                    MatchedPattern(
+                        name=pattern.name,
+                        weight=pattern.weight,
+                        matched_text=m.group(0),
+                    )
+                )
+
+        score = min(total_weight, 1.0)
+
+        explanation: Optional[str] = None
+        if matched_patterns:
+            names = ", ".join(p.name for p in matched_patterns)
+            explanation = (
+                f"matched {len(matched_patterns)} jailbreak pattern(s): {names}"
             )
 
         return DetectionResult(

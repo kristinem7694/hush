@@ -184,6 +184,30 @@ describe('evaluateCondition', () => {
       };
       expect(evaluateCondition(cond, ctxWithTime('2026-01-14T03:00:00Z'))).toBe(true);
     });
+
+    it('supports minute offsets in numeric timezones', () => {
+      const cond: Condition = {
+        time_window: {
+          start: '05:30',
+          end: '06:30',
+          timezone: '+05:30',
+        },
+      };
+      expect(evaluateCondition(cond, ctxWithTime('2026-01-14T00:15:00Z'))).toBe(true);
+      expect(evaluateCondition(cond, ctxWithTime('2026-01-14T01:15:00Z'))).toBe(false);
+    });
+
+    it('uses real IANA timezone offsets including dst', () => {
+      const cond: Condition = {
+        time_window: {
+          start: '08:30',
+          end: '09:30',
+          timezone: 'America/New_York',
+        },
+      };
+      expect(evaluateCondition(cond, ctxWithTime('2026-01-14T13:45:00Z'))).toBe(true);
+      expect(evaluateCondition(cond, ctxWithTime('2026-07-14T12:45:00Z'))).toBe(true);
+    });
   });
 
   // -----------------------------------------------------------------------

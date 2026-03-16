@@ -68,3 +68,141 @@ rules:
         Some("rules.remote_desktop_channels.clipboard")
     );
 }
+
+#[test]
+fn origin_profile_tool_access_still_respects_base_blocklist() {
+    let spec = HushSpec::parse(
+        r#"
+hushspec: "0.1.0"
+name: origin-tool-access
+rules:
+  tool_access:
+    enabled: true
+    allow:
+      - "*"
+    block:
+      - dangerous_tool
+    require_confirmation: []
+    default: allow
+extensions:
+  origins:
+    default_behavior: deny
+    profiles:
+      - id: slack
+        match:
+          provider: slack
+        tool_access:
+          enabled: true
+          allow:
+            - "*"
+          block: []
+          require_confirmation: []
+          default: allow
+"#,
+    )
+    .expect("valid spec");
+
+    let result = evaluate(
+        &spec,
+        &EvaluationAction {
+            action_type: "tool_call".into(),
+            target: Some("dangerous_tool".into()),
+            origin: Some(hushspec::OriginContext {
+                provider: Some("slack".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(result.decision, Decision::Deny);
+    assert_eq!(
+        result.matched_rule.as_deref(),
+        Some("rules.tool_access.block")
+    );
+    assert_eq!(result.origin_profile.as_deref(), Some("slack"));
+}
+
+#[test]
+fn origin_profile_egress_cannot_bypass_base_default_block() {
+    let spec = HushSpec::parse(
+        r#"
+hushspec: "0.1.0"
+name: origin-egress
+rules:
+  egress:
+    enabled: true
+    allow:
+      - api.safe.example.com
+    block: []
+    default: block
+extensions:
+  origins:
+    default_behavior: deny
+    profiles:
+      - id: slack
+        match:
+          provider: slack
+        egress:
+          enabled: true
+          allow: []
+          block: []
+          default: allow
+"#,
+    )
+    .expect("valid spec");
+
+    let result = evaluate(
+        &spec,
+        &EvaluationAction {
+            action_type: "egress".into(),
+            target: Some("evil.example.com".into()),
+            origin: Some(hushspec::OriginContext {
+                provider: Some("slack".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(result.decision, Decision::Deny);
+    assert_eq!(
+        result.matched_rule.as_deref(),
+        Some("extensions.origins.profiles.slack.egress.default")
+    );
+    assert_eq!(result.origin_profile.as_deref(), Some("slack"));
+}
+
+#[test]
+fn forbidden_path_exception_still_respects_path_allowlist() {
+    let spec = HushSpec::parse(
+        r#"
+hushspec: "0.1.0"
+name: path-guards
+rules:
+  forbidden_paths:
+    enabled: true
+    patterns:
+      - "**/*.key"
+    exceptions:
+      - "/workspace/allowed.key"
+  path_allowlist:
+    enabled: true
+    write:
+      - "/workspace/reports/**"
+"#,
+    )
+    .expect("valid spec");
+
+    let result = evaluate(
+        &spec,
+        &EvaluationAction {
+            action_type: "file_write".into(),
+            target: Some("/workspace/allowed.key".into()),
+            ..Default::default()
+        },
+    );
+
+    assert_eq!(result.decision, Decision::Deny);
+    assert_eq!(result.matched_rule.as_deref(), Some("rules.path_allowlist"));
+}

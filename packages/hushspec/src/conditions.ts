@@ -169,76 +169,64 @@ function resolveCurrentTime(
   }
 
   const tz = timezone ?? 'UTC';
-  const offsetHours = parseTimezoneOffset(tz);
-  const adjustedMs = date.getTime() + offsetHours * 3600 * 1000;
-  const adjusted = new Date(adjustedMs);
+  const offsetMinutes = parseTimezoneOffsetMinutes(tz);
+  if (offsetMinutes != null) {
+    const adjusted = new Date(date.getTime() + offsetMinutes * 60_000);
+    return utcDateParts(adjusted);
+  }
 
-  const hour = adjusted.getUTCHours();
-  const minute = adjusted.getUTCMinutes();
-  // Convert JS 0=Sun..6=Sat to 0=Mon..6=Sun
-  const jsDay = adjusted.getUTCDay();
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'short',
+      hourCycle: 'h23',
+    }).formatToParts(date);
+
+    const hour = parseInt(parts.find((part) => part.type === 'hour')?.value ?? '', 10);
+    const minute = parseInt(parts.find((part) => part.type === 'minute')?.value ?? '', 10);
+    const weekday = parts.find((part) => part.type === 'weekday')?.value.toLowerCase().slice(0, 3);
+    if (Number.isNaN(hour) || Number.isNaN(minute) || weekday == null) {
+      return undefined;
+    }
+
+    const dayOfWeek = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].indexOf(weekday);
+    if (dayOfWeek < 0) {
+      return undefined;
+    }
+
+    return [hour, minute, dayOfWeek];
+  } catch {
+    return undefined;
+  }
+}
+
+function utcDateParts(date: Date): [number, number, number] {
+  const jsDay = date.getUTCDay();
   const dayOfWeek = jsDay === 0 ? 6 : jsDay - 1;
-
-  return [hour, minute, dayOfWeek];
+  return [date.getUTCHours(), date.getUTCMinutes(), dayOfWeek];
 }
 
-function parseTimezoneOffset(tz: string): number {
-  const offsets: Record<string, number> = {
-    'UTC': 0,
-    'utc': 0,
-    'Etc/UTC': 0,
-    'Etc/GMT': 0,
-    'GMT': 0,
-    'America/New_York': -5,
-    'US/Eastern': -5,
-    'EST': -5,
-    'America/Chicago': -6,
-    'US/Central': -6,
-    'CST': -6,
-    'America/Denver': -7,
-    'US/Mountain': -7,
-    'MST': -7,
-    'America/Los_Angeles': -8,
-    'US/Pacific': -8,
-    'PST': -8,
-    'Europe/London': 0,
-    'GB': 0,
-    'Europe/Paris': 1,
-    'Europe/Berlin': 1,
-    'CET': 1,
-    'Europe/Helsinki': 2,
-    'EET': 2,
-    'Asia/Tokyo': 9,
-    'Japan': 9,
-    'JST': 9,
-    'Asia/Shanghai': 8,
-    'Asia/Hong_Kong': 8,
-    'PRC': 8,
-    'Asia/Kolkata': 5,
-    'Asia/Calcutta': 5,
-    'IST': 5,
-  };
-
-  if (tz in offsets) {
-    return offsets[tz];
+function parseTimezoneOffsetMinutes(tz: string): number | undefined {
+  const normalized = tz.trim();
+  if (['UTC', 'utc', 'Etc/UTC', 'Etc/GMT', 'GMT'].includes(normalized)) {
+    return 0;
   }
 
-  if (tz.startsWith('+')) {
-    return parseOffsetValue(tz.slice(1));
-  }
-  if (tz.startsWith('-')) {
-    return -parseOffsetValue(tz.slice(1));
+  const match = normalized.match(/^([+-])(\d{1,2})(?::?(\d{2}))?$/);
+  if (!match) {
+    return undefined;
   }
 
-  return 0;
-}
-
-function parseOffsetValue(s: string): number {
-  const colonIdx = s.indexOf(':');
-  if (colonIdx >= 0) {
-    return parseInt(s.slice(0, colonIdx), 10) || 0;
+  const hours = parseInt(match[2], 10);
+  const minutes = parseInt(match[3] ?? '0', 10);
+  if (Number.isNaN(hours) || Number.isNaN(minutes) || hours > 23 || minutes > 59) {
+    return undefined;
   }
-  return parseInt(s, 10) || 0;
+
+  const totalMinutes = hours * 60 + minutes;
+  return match[1] === '-' ? -totalMinutes : totalMinutes;
 }
 
 function checkContextMatch(

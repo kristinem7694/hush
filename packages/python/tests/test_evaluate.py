@@ -115,3 +115,161 @@ def test_evaluation(policy: dict, case: dict):
             f"{case['description']}: expected posture.next={expected['posture']['next']}, "
             f"got {result.posture.next}"
         )
+
+
+def test_origin_profile_tool_access_still_respects_base_blocklist():
+    ok, spec_or_err = parse(
+        """\
+hushspec: "0.1.0"
+rules:
+  tool_access:
+    enabled: true
+    allow: ["*"]
+    block: ["dangerous_tool"]
+    require_confirmation: []
+    default: allow
+extensions:
+  origins:
+    default_behavior: deny
+    profiles:
+      - id: slack
+        match:
+          provider: slack
+        tool_access:
+          enabled: true
+          allow: ["*"]
+          block: []
+          require_confirmation: []
+          default: allow
+"""
+    )
+    assert ok, spec_or_err
+    spec = spec_or_err
+
+    result = evaluate(
+        spec,
+        EvaluationAction(
+            type="tool_call",
+            target="dangerous_tool",
+            origin=OriginContext(provider="slack"),
+        ),
+    )
+
+    assert result.decision == Decision.DENY
+    assert result.matched_rule == "rules.tool_access.block"
+    assert result.origin_profile == "slack"
+
+
+def test_origin_profile_egress_cannot_bypass_base_default_block():
+    ok, spec_or_err = parse(
+        """\
+hushspec: "0.1.0"
+rules:
+  egress:
+    enabled: true
+    allow: ["api.safe.example.com"]
+    block: []
+    default: block
+extensions:
+  origins:
+    default_behavior: deny
+    profiles:
+      - id: slack
+        match:
+          provider: slack
+        egress:
+          enabled: true
+          allow: []
+          block: []
+          default: allow
+"""
+    )
+    assert ok, spec_or_err
+    spec = spec_or_err
+
+    result = evaluate(
+        spec,
+        EvaluationAction(
+            type="egress",
+            target="evil.example.com",
+            origin=OriginContext(provider="slack"),
+        ),
+    )
+
+    assert result.decision == Decision.DENY
+    assert result.matched_rule == "extensions.origins.profiles.slack.egress.default"
+    assert result.origin_profile == "slack"
+
+
+def test_forbidden_path_exception_still_respects_path_allowlist():
+    ok, spec_or_err = parse(
+        """\
+hushspec: "0.1.0"
+rules:
+  forbidden_paths:
+    enabled: true
+    patterns: ["**/*.key"]
+    exceptions: ["/workspace/allowed.key"]
+  path_allowlist:
+    enabled: true
+    write: ["/workspace/reports/**"]
+"""
+    )
+    assert ok, spec_or_err
+    spec = spec_or_err
+
+    result = evaluate(
+        spec,
+        EvaluationAction(type="file_write", target="/workspace/allowed.key"),
+    )
+
+    assert result.decision == Decision.DENY
+    assert result.matched_rule == "rules.path_allowlist"
+
+
+def test_input_inject_denies_unlisted_type():
+    ok, spec_or_err = parse(
+        """\
+hushspec: "0.1.0"
+rules:
+  input_injection:
+    enabled: true
+    allowed_types: [keyboard]
+"""
+    )
+    assert ok, spec_or_err
+    spec = spec_or_err
+
+    result = evaluate(spec, EvaluationAction(type="input_inject", target="mouse"))
+
+    assert result.decision == Decision.DENY
+    assert result.matched_rule == "rules.input_injection.allowed_types"
+
+
+def test_computer_use_respects_remote_desktop_channel_blocks():
+    ok, spec_or_err = parse(
+        """\
+hushspec: "0.1.0"
+rules:
+  computer_use:
+    enabled: true
+    mode: observe
+    allowed_actions: [remote.clipboard]
+  remote_desktop_channels:
+    enabled: true
+    clipboard: false
+    file_transfer: false
+    audio: true
+    drive_mapping: false
+"""
+    )
+    assert ok, spec_or_err
+    spec = spec_or_err
+
+    result = evaluate(
+        spec,
+        EvaluationAction(type="computer_use", target="remote.clipboard"),
+    )
+
+    assert result.decision == Decision.DENY
+    assert result.matched_rule == "rules.remote_desktop_channels.clipboard"

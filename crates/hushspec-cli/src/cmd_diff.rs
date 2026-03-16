@@ -519,6 +519,16 @@ fn format_decision(d: &Decision) -> String {
     }
 }
 
+fn format_decision_cell(decision: &str) -> String {
+    let padded = format!("{decision:<9}");
+    match decision {
+        "allow" => padded.green().to_string(),
+        "deny" => padded.red().to_string(),
+        "warn" => padded.yellow().to_string(),
+        _ => padded,
+    }
+}
+
 fn print_text_diff(args: &DiffArgs, changes: &[DecisionChange]) {
     println!(
         "Comparing {} -> {}\n",
@@ -564,24 +574,13 @@ fn print_text_diff(args: &DiffArgs, changes: &[DecisionChange]) {
             truncate_str(&c.action.target, 22)
         );
 
-        let old_colored = match c.old_decision.as_str() {
-            "allow" => c.old_decision.green().to_string(),
-            "deny" => c.old_decision.red().to_string(),
-            "warn" => c.old_decision.yellow().to_string(),
-            _ => c.old_decision.clone(),
-        };
-
-        let new_colored = match c.new_decision.as_str() {
-            "allow" => c.new_decision.green().to_string(),
-            "deny" => c.new_decision.red().to_string(),
-            "warn" => c.new_decision.yellow().to_string(),
-            _ => c.new_decision.clone(),
-        };
+        let old_colored = format_decision_cell(&c.old_decision);
+        let new_colored = format_decision_cell(&c.new_decision);
 
         let rule = c.new_rule.as_deref().unwrap_or("(none)");
 
         println!(
-            "  {:<34} {:<9} {:<9} {}",
+            "  {:<34} {} {} {}",
             action_desc, old_colored, new_colored, rule
         );
     }
@@ -646,7 +645,25 @@ fn floor_char_boundary(s: &str, max_len: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_str;
+    use super::{format_decision_cell, truncate_str};
+
+    fn strip_ansi(value: &str) -> String {
+        let mut stripped = String::new();
+        let mut chars = value.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+                chars.next();
+                for inner in chars.by_ref() {
+                    if inner.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+                continue;
+            }
+            stripped.push(ch);
+        }
+        stripped
+    }
 
     #[test]
     fn truncate_str_respects_utf8_boundaries() {
@@ -655,5 +672,11 @@ mod tests {
 
         assert_eq!(truncated, "deploy-...");
         assert!(truncated.is_char_boundary(truncated.len()));
+    }
+
+    #[test]
+    fn format_decision_cell_preserves_column_width_without_counting_ansi() {
+        let colored = format_decision_cell("allow");
+        assert_eq!(strip_ansi(&colored), "allow    ");
     }
 }

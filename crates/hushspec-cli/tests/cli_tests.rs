@@ -714,6 +714,46 @@ rules:
 }
 
 #[test]
+fn fmt_sorts_and_dedupes_path_allowlist_entries() {
+    let tmp = TempDir::new().unwrap();
+    let policy_path = tmp.path().join("allowlist.yaml");
+
+    fs::write(
+        &policy_path,
+        r#"hushspec: "0.1.0"
+name: allowlist
+rules:
+  path_allowlist:
+    enabled: true
+    read:
+      - "/zeta/**"
+      - "/alpha/**"
+      - "/alpha/**"
+    write:
+      - "/tmp/**"
+      - "/app/**"
+      - "/app/**"
+    patch:
+      - "/patches/z/**"
+      - "/patches/a/**"
+      - "/patches/a/**"
+"#,
+    )
+    .unwrap();
+
+    hushspec()
+        .arg("fmt")
+        .arg(policy_path.to_str().unwrap())
+        .assert()
+        .success();
+
+    let formatted = fs::read_to_string(&policy_path).unwrap();
+    assert!(formatted.contains("read:\n      - \"/alpha/**\"\n      - \"/zeta/**\"\n"));
+    assert!(formatted.contains("write:\n      - \"/app/**\"\n      - \"/tmp/**\"\n"));
+    assert!(formatted.contains("patch:\n      - \"/patches/a/**\"\n      - \"/patches/z/**\"\n"));
+}
+
+#[test]
 fn fmt_preserves_governance_metadata() {
     let tmp = TempDir::new().unwrap();
     let policy_path = tmp.path().join("metadata.yaml");

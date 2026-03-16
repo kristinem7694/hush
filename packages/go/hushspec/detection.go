@@ -49,10 +49,11 @@ func (r *DetectorRegistry) Register(detector Detector) {
 }
 
 // WithDefaultDetectors returns a registry pre-loaded with the built-in
-// regex-based injection and exfiltration detectors.
+// regex-based injection, jailbreak, and exfiltration detectors.
 func WithDefaultDetectors() *DetectorRegistry {
 	r := NewDetectorRegistry()
 	r.Register(NewRegexInjectionDetector())
+	r.Register(NewRegexJailbreakDetector())
 	r.Register(NewRegexExfiltrationDetector())
 	return r
 }
@@ -72,8 +73,8 @@ type detectionPattern struct {
 	category DetectionCategory
 }
 
-// RegexInjectionDetector scores prompt injection and jailbreak attempts
-// using a fixed set of compiled regex patterns.
+// RegexInjectionDetector scores prompt injection attempts using a fixed
+// set of compiled regex patterns.
 type RegexInjectionDetector struct {
 	patterns []detectionPattern
 }
@@ -110,12 +111,6 @@ func NewRegexInjectionDetector() *RegexInjectionDetector {
 				regex:    regexp.MustCompile(`(?i)(pretend|imagine|act\s+as\s+if|suppose)\s+(you|that|we)`),
 				weight:   0.2,
 				category: DetectionCategoryPromptInjection,
-			},
-			{
-				name:     "jailbreak_dan",
-				regex:    regexp.MustCompile(`(?i)(DAN|do\s+anything\s+now|developer\s+mode|jailbreak)`),
-				weight:   0.5,
-				category: DetectionCategoryJailbreak,
 			},
 			{
 				name:     "delimiter_injection",
@@ -167,7 +162,74 @@ func (d *RegexInjectionDetector) Detect(input string) DetectionResult {
 			names[i] = p.Name
 		}
 		explanation = fmt.Sprintf(
-			"matched %d injection/jailbreak pattern(s): %s",
+			"matched %d injection pattern(s): %s",
+			len(matchedPatterns), strings.Join(names, ", "),
+		)
+	}
+
+	return DetectionResult{
+		DetectorName:    d.Name(),
+		Category:        d.Category(),
+		Score:           score,
+		MatchedPatterns: matchedPatterns,
+		Explanation:     explanation,
+	}
+}
+
+// RegexJailbreakDetector scores jailbreak attempts using a fixed set of
+// compiled regex patterns.
+type RegexJailbreakDetector struct {
+	patterns []detectionPattern
+}
+
+func NewRegexJailbreakDetector() *RegexJailbreakDetector {
+	return &RegexJailbreakDetector{
+		patterns: []detectionPattern{
+			{
+				name:     "jailbreak_dan",
+				regex:    regexp.MustCompile(`(?i)(DAN|do\s+anything\s+now|developer\s+mode|jailbreak)`),
+				weight:   0.5,
+				category: DetectionCategoryJailbreak,
+			},
+		},
+	}
+}
+
+func (d *RegexJailbreakDetector) Name() string { return "regex_jailbreak" }
+
+func (d *RegexJailbreakDetector) Category() DetectionCategory {
+	return DetectionCategoryJailbreak
+}
+
+func (d *RegexJailbreakDetector) Detect(input string) DetectionResult {
+	var matchedPatterns []MatchedPattern
+	totalWeight := 0.0
+
+	for _, p := range d.patterns {
+		loc := p.regex.FindStringIndex(input)
+		if loc != nil {
+			totalWeight += p.weight
+			matchedPatterns = append(matchedPatterns, MatchedPattern{
+				Name:        p.name,
+				Weight:      p.weight,
+				MatchedText: input[loc[0]:loc[1]],
+			})
+		}
+	}
+
+	score := totalWeight
+	if score > 1.0 {
+		score = 1.0
+	}
+
+	var explanation string
+	if len(matchedPatterns) > 0 {
+		names := make([]string, len(matchedPatterns))
+		for i, p := range matchedPatterns {
+			names[i] = p.Name
+		}
+		explanation = fmt.Sprintf(
+			"matched %d jailbreak pattern(s): %s",
 			len(matchedPatterns), strings.Join(names, ", "),
 		)
 	}

@@ -105,6 +105,8 @@ func Evaluate(spec *HushSpec, action *EvaluationAction) EvaluationResult {
 		return evaluateShellCommand(spec, action, posture, originProfileID)
 	case "computer_use":
 		return evaluateComputerUse(spec, action, posture, originProfileID)
+	case "input_inject":
+		return evaluateInputInjection(spec, action, posture, originProfileID)
 	default:
 		return allowResult("", "no reference evaluator rule for this action type", originProfileID, posture)
 	}
@@ -117,18 +119,80 @@ func evaluateToolCall(
 	posture *PostureResult,
 	originProfileID string,
 ) EvaluationResult {
-	var rule *ToolAccessRule
-	var prefix string
+	var baseRule *ToolAccessRule
+	var profileRule *ToolAccessRule
+	var profilePrefix string
 
-	if matchedProfile != nil && matchedProfile.ToolAccess != nil {
-		rule = matchedProfile.ToolAccess
-		prefix = profileRulePrefix(matchedProfile.ID, "tool_access")
-	} else if spec.Rules != nil && spec.Rules.ToolAccess != nil {
-		rule = spec.Rules.ToolAccess
-		prefix = "rules.tool_access"
+	if spec.Rules != nil && spec.Rules.ToolAccess != nil && spec.Rules.ToolAccess.Enabled {
+		baseRule = spec.Rules.ToolAccess
+	}
+	if matchedProfile != nil && matchedProfile.ToolAccess != nil && matchedProfile.ToolAccess.Enabled {
+		profileRule = matchedProfile.ToolAccess
+		profilePrefix = profileRulePrefix(matchedProfile.ID, "tool_access")
 	}
 
-	return evaluateToolAccessRule(rule, prefix, action.Target, action.ArgsSize, posture, originProfileID)
+	if baseRule == nil && profileRule == nil {
+		return allowResult("", "", originProfileID, posture)
+	}
+
+	if limit, matchedRule, ok := smallestToolArgLimit(baseRule, profileRule, profilePrefix); ok {
+		actual := 0
+		if action.ArgsSize != nil {
+			actual = *action.ArgsSize
+		}
+		if actual > limit {
+			return denyResult(
+				matchedRule,
+				"tool arguments exceeded max_args_size",
+				originProfileID, posture,
+			)
+		}
+	}
+
+	target := action.Target
+	if baseRule != nil && findFirstMatch(target, baseRule.Block) >= 0 {
+		return denyResult("rules.tool_access.block", "tool is explicitly blocked", originProfileID, posture)
+	}
+	if profileRule != nil && findFirstMatch(target, profileRule.Block) >= 0 {
+		return denyResult(profilePrefix+".block", "tool is explicitly blocked", originProfileID, posture)
+	}
+
+	if baseRule != nil && findFirstMatch(target, baseRule.RequireConfirmation) >= 0 {
+		return warnResult("rules.tool_access.require_confirmation", "tool requires confirmation", originProfileID, posture)
+	}
+	if profileRule != nil && findFirstMatch(target, profileRule.RequireConfirmation) >= 0 {
+		return warnResult(profilePrefix+".require_confirmation", "tool requires confirmation", originProfileID, posture)
+	}
+
+	baseHasAllow := baseRule != nil && hasPatterns(baseRule.Allow)
+	profileHasAllow := profileRule != nil && hasPatterns(profileRule.Allow)
+	baseAllowMatch := !baseHasAllow || (baseRule != nil && findFirstMatch(target, baseRule.Allow) >= 0)
+	profileAllowMatch := !profileHasAllow || (profileRule != nil && findFirstMatch(target, profileRule.Allow) >= 0)
+	if (baseHasAllow || profileHasAllow) && baseAllowMatch && profileAllowMatch {
+		matchedRule := ""
+		if profileHasAllow {
+			matchedRule = profilePrefix + ".allow"
+		} else if baseHasAllow {
+			matchedRule = "rules.tool_access.allow"
+		}
+		return allowResult(matchedRule, "tool is explicitly allowed", originProfileID, posture)
+	}
+
+	defaultAction := DefaultActionAllow
+	if (baseRule != nil && baseRule.Default == DefaultActionBlock) || (profileRule != nil && profileRule.Default == DefaultActionBlock) {
+		defaultAction = DefaultActionBlock
+	}
+	matchedRule := ""
+	if profileRule != nil {
+		matchedRule = profilePrefix + ".default"
+	} else if baseRule != nil {
+		matchedRule = "rules.tool_access.default"
+	}
+
+	if defaultAction == DefaultActionBlock {
+		return denyResult(matchedRule, "tool matched default block", originProfileID, posture)
+	}
+	return allowResult(matchedRule, "tool matched default allow", originProfileID, posture)
 }
 
 func evaluateEgress(
@@ -138,22 +202,59 @@ func evaluateEgress(
 	posture *PostureResult,
 	originProfileID string,
 ) EvaluationResult {
-	var rule *EgressRule
-	var prefix string
+	var baseRule *EgressRule
+	var profileRule *EgressRule
+	var profilePrefix string
 
-	if matchedProfile != nil && matchedProfile.Egress != nil {
-		rule = matchedProfile.Egress
-		prefix = profileRulePrefix(matchedProfile.ID, "egress")
-	} else if spec.Rules != nil && spec.Rules.Egress != nil {
-		rule = spec.Rules.Egress
-		prefix = "rules.egress"
+	if spec.Rules != nil && spec.Rules.Egress != nil && spec.Rules.Egress.Enabled {
+		baseRule = spec.Rules.Egress
+	}
+	if matchedProfile != nil && matchedProfile.Egress != nil && matchedProfile.Egress.Enabled {
+		profileRule = matchedProfile.Egress
+		profilePrefix = profileRulePrefix(matchedProfile.ID, "egress")
 	}
 
-	if rule == nil {
+	if baseRule == nil && profileRule == nil {
 		return allowResult("", "", originProfileID, posture)
 	}
 
-	return evaluateEgressRule(rule, prefix, action.Target, posture, originProfileID)
+	target := action.Target
+	if baseRule != nil && findFirstMatch(target, baseRule.Block) >= 0 {
+		return denyResult("rules.egress.block", "domain is explicitly blocked", originProfileID, posture)
+	}
+	if profileRule != nil && findFirstMatch(target, profileRule.Block) >= 0 {
+		return denyResult(profilePrefix+".block", "domain is explicitly blocked", originProfileID, posture)
+	}
+
+	baseHasAllow := baseRule != nil && hasPatterns(baseRule.Allow)
+	profileHasAllow := profileRule != nil && hasPatterns(profileRule.Allow)
+	baseAllowMatch := !baseHasAllow || (baseRule != nil && findFirstMatch(target, baseRule.Allow) >= 0)
+	profileAllowMatch := !profileHasAllow || (profileRule != nil && findFirstMatch(target, profileRule.Allow) >= 0)
+	if (baseHasAllow || profileHasAllow) && baseAllowMatch && profileAllowMatch {
+		matchedRule := ""
+		if profileHasAllow {
+			matchedRule = profilePrefix + ".allow"
+		} else if baseHasAllow {
+			matchedRule = "rules.egress.allow"
+		}
+		return allowResult(matchedRule, "domain is explicitly allowed", originProfileID, posture)
+	}
+
+	defaultAction := DefaultActionAllow
+	if (baseRule != nil && baseRule.Default == DefaultActionBlock) || (profileRule != nil && profileRule.Default == DefaultActionBlock) {
+		defaultAction = DefaultActionBlock
+	}
+	matchedRule := ""
+	if profileRule != nil {
+		matchedRule = profilePrefix + ".default"
+	} else if baseRule != nil {
+		matchedRule = "rules.egress.default"
+	}
+
+	if defaultAction == DefaultActionBlock {
+		return denyResult(matchedRule, "domain matched default block", originProfileID, posture)
+	}
+	return allowResult(matchedRule, "domain matched default allow", originProfileID, posture)
 }
 
 func evaluateFileRead(
@@ -220,8 +321,38 @@ func evaluateComputerUse(
 	posture *PostureResult,
 	originProfileID string,
 ) EvaluationResult {
+	var computerUseResult *EvaluationResult
 	if spec.Rules != nil && spec.Rules.ComputerUse != nil {
-		return evaluateComputerUseRule(spec.Rules.ComputerUse, action.Target, posture, originProfileID)
+		result := evaluateComputerUseRule(spec.Rules.ComputerUse, action.Target, posture, originProfileID)
+		computerUseResult = &result
+	}
+	var remoteDesktopResult *EvaluationResult
+	if spec.Rules != nil && spec.Rules.RemoteDesktopChannels != nil {
+		if result := evaluateRemoteDesktopChannelsRule(spec.Rules.RemoteDesktopChannels, action.Target, posture, originProfileID); result != nil {
+			remoteDesktopResult = result
+		}
+	}
+
+	switch {
+	case computerUseResult != nil && remoteDesktopResult != nil:
+		return moreRestrictiveResult(*computerUseResult, *remoteDesktopResult)
+	case computerUseResult != nil:
+		return *computerUseResult
+	case remoteDesktopResult != nil:
+		return *remoteDesktopResult
+	default:
+		return allowResult("", "", originProfileID, posture)
+	}
+}
+
+func evaluateInputInjection(
+	spec *HushSpec,
+	action *EvaluationAction,
+	posture *PostureResult,
+	originProfileID string,
+) EvaluationResult {
+	if spec.Rules != nil && spec.Rules.InputInjection != nil {
+		return evaluateInputInjectionRule(spec.Rules.InputInjection, action.Target, posture, originProfileID)
 	}
 	return allowResult("", "", originProfileID, posture)
 }
@@ -501,6 +632,92 @@ func evaluateComputerUseRule(
 	}
 }
 
+func evaluateRemoteDesktopChannelsRule(
+	rule *RemoteDesktopChannelsRule,
+	target string,
+	posture *PostureResult,
+	originProfileID string,
+) *EvaluationResult {
+	if !rule.Enabled {
+		return nil
+	}
+
+	field := ""
+	allowed := false
+	switch target {
+	case "remote.clipboard":
+		field = "clipboard"
+		allowed = rule.Clipboard
+	case "remote.file_transfer":
+		field = "file_transfer"
+		allowed = rule.FileTransfer
+	case "remote.audio":
+		field = "audio"
+		allowed = rule.Audio
+	case "remote.drive_mapping":
+		field = "drive_mapping"
+		allowed = rule.DriveMapping
+	default:
+		return nil
+	}
+
+	var result EvaluationResult
+	if allowed {
+		result = allowResult(
+			"rules.remote_desktop_channels."+field,
+			fmt.Sprintf("remote desktop channel '%s' is enabled", field),
+			originProfileID,
+			posture,
+		)
+	} else {
+		result = denyResult(
+			"rules.remote_desktop_channels."+field,
+			fmt.Sprintf("remote desktop channel '%s' is disabled", field),
+			originProfileID,
+			posture,
+		)
+	}
+	return &result
+}
+
+func evaluateInputInjectionRule(
+	rule *InputInjectionRule,
+	target string,
+	posture *PostureResult,
+	originProfileID string,
+) EvaluationResult {
+	if !rule.Enabled {
+		return allowResult("", "", originProfileID, posture)
+	}
+
+	if len(rule.AllowedTypes) == 0 {
+		return denyResult(
+			"rules.input_injection.allowed_types",
+			"input injection is not allowed when allowed_types is empty",
+			originProfileID,
+			posture,
+		)
+	}
+
+	for _, allowedType := range rule.AllowedTypes {
+		if allowedType == target {
+			return allowResult(
+				"rules.input_injection.allowed_types",
+				"input injection type is explicitly allowed",
+				originProfileID,
+				posture,
+			)
+		}
+	}
+
+	return denyResult(
+		"rules.input_injection.allowed_types",
+		"input injection type is not allowed",
+		originProfileID,
+		posture,
+	)
+}
+
 func evaluatePathGuards(
 	spec *HushSpec,
 	target string,
@@ -512,16 +729,29 @@ func evaluatePathGuards(
 		return nil
 	}
 
+	forbiddenExceptionMatched := false
+
 	if spec.Rules.ForbiddenPaths != nil {
-		if result := evaluateForbiddenPaths(spec.Rules.ForbiddenPaths, target, posture, originProfileID); result != nil {
-			return result
+		denied, exceptionMatched := evaluateForbiddenPaths(spec.Rules.ForbiddenPaths, target, posture, originProfileID)
+		if denied != nil {
+			return denied
 		}
+		forbiddenExceptionMatched = exceptionMatched
 	}
 
 	if spec.Rules.PathAllowlist != nil {
 		if result := evaluatePathAllowlist(spec.Rules.PathAllowlist, target, operation, posture, originProfileID); result != nil {
 			return result
 		}
+	}
+
+	if forbiddenExceptionMatched {
+		result := allowResult(
+			"rules.forbidden_paths.exceptions",
+			"path matched an explicit exception",
+			originProfileID, posture,
+		)
+		return &result
 	}
 
 	return nil
@@ -532,18 +762,13 @@ func evaluateForbiddenPaths(
 	target string,
 	posture *PostureResult,
 	originProfileID string,
-) *EvaluationResult {
+) (*EvaluationResult, bool) {
 	if !rule.Enabled {
-		return nil
+		return nil, false
 	}
 
 	if findFirstMatch(target, rule.Exceptions) >= 0 {
-		result := allowResult(
-			"rules.forbidden_paths.exceptions",
-			"path matched an explicit exception",
-			originProfileID, posture,
-		)
-		return &result
+		return nil, true
 	}
 
 	if findFirstMatch(target, rule.Patterns) >= 0 {
@@ -552,10 +777,10 @@ func evaluateForbiddenPaths(
 			"path matched a forbidden pattern",
 			originProfileID, posture,
 		)
-		return &result
+		return &result, false
 	}
 
-	return nil
+	return nil, false
 }
 
 func evaluatePathAllowlist(
@@ -824,6 +1049,59 @@ func prefixedRule(prefix, suffix string) string {
 
 func profileRulePrefix(profileID, field string) string {
 	return fmt.Sprintf("extensions.origins.profiles.%s.%s", profileID, field)
+}
+
+func hasPatterns(patterns []string) bool {
+	return len(patterns) > 0
+}
+
+func smallestToolArgLimit(baseRule, profileRule *ToolAccessRule, profilePrefix string) (int, string, bool) {
+	limit := 0
+	matchedRule := ""
+	ok := false
+
+	if baseRule != nil && baseRule.MaxArgsSize != nil {
+		limit = *baseRule.MaxArgsSize
+		matchedRule = "rules.tool_access.max_args_size"
+		ok = true
+	}
+	if profileRule != nil && profileRule.MaxArgsSize != nil {
+		if !ok || *profileRule.MaxArgsSize < limit {
+			limit = *profileRule.MaxArgsSize
+			matchedRule = profilePrefix + ".max_args_size"
+			ok = true
+		}
+	}
+
+	return limit, matchedRule, ok
+}
+
+func decisionRank(decision Decision) int {
+	switch decision {
+	case DecisionAllow:
+		return 1
+	case DecisionWarn:
+		return 2
+	case DecisionDeny:
+		return 3
+	default:
+		return 0
+	}
+}
+
+func moreRestrictiveResult(left, right EvaluationResult) EvaluationResult {
+	leftRank := decisionRank(left.Decision)
+	rightRank := decisionRank(right.Decision)
+	if rightRank > leftRank {
+		return right
+	}
+	if leftRank > rightRank {
+		return left
+	}
+	if right.MatchedRule != "" {
+		return right
+	}
+	return left
 }
 
 func allowResult(matchedRule, reason, originProfile string, posture *PostureResult) EvaluationResult {

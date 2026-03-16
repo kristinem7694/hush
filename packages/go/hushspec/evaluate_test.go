@@ -274,6 +274,163 @@ rules:
 	}
 }
 
+func TestOriginProfileToolAccessStillRespectsBaseBlocklist(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+rules:
+  tool_access:
+    enabled: true
+    allow: ["*"]
+    block: ["dangerous_tool"]
+    require_confirmation: []
+    default: allow
+extensions:
+  origins:
+    default_behavior: deny
+    profiles:
+      - id: slack
+        match:
+          provider: slack
+        tool_access:
+          enabled: true
+          allow: ["*"]
+          block: []
+          require_confirmation: []
+          default: allow
+`)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	result := Evaluate(spec, &EvaluationAction{
+		Type:   "tool_call",
+		Target: "dangerous_tool",
+		Origin: &OriginContext{Provider: "slack"},
+	})
+	if result.Decision != DecisionDeny {
+		t.Fatalf("expected base blocklist to deny, got %q (%s)", result.Decision, result.Reason)
+	}
+	if result.MatchedRule != "rules.tool_access.block" {
+		t.Fatalf("expected rules.tool_access.block, got %q", result.MatchedRule)
+	}
+}
+
+func TestOriginProfileEgressCannotBypassBaseDefaultBlock(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+rules:
+  egress:
+    enabled: true
+    allow: ["api.safe.example.com"]
+    block: []
+    default: block
+extensions:
+  origins:
+    default_behavior: deny
+    profiles:
+      - id: slack
+        match:
+          provider: slack
+        egress:
+          enabled: true
+          allow: []
+          block: []
+          default: allow
+`)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	result := Evaluate(spec, &EvaluationAction{
+		Type:   "egress",
+		Target: "evil.example.com",
+		Origin: &OriginContext{Provider: "slack"},
+	})
+	if result.Decision != DecisionDeny {
+		t.Fatalf("expected base default block to deny, got %q (%s)", result.Decision, result.Reason)
+	}
+	if result.MatchedRule != "extensions.origins.profiles.slack.egress.default" {
+		t.Fatalf("expected profile default match, got %q", result.MatchedRule)
+	}
+}
+
+func TestForbiddenPathExceptionStillRespectsPathAllowlist(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+rules:
+  forbidden_paths:
+    enabled: true
+    patterns: ["**/*.key"]
+    exceptions: ["/workspace/allowed.key"]
+  path_allowlist:
+    enabled: true
+    write: ["/workspace/reports/**"]
+`)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	result := Evaluate(spec, &EvaluationAction{
+		Type:   "file_write",
+		Target: "/workspace/allowed.key",
+	})
+	if result.Decision != DecisionDeny {
+		t.Fatalf("expected path allowlist to deny, got %q (%s)", result.Decision, result.Reason)
+	}
+	if result.MatchedRule != "rules.path_allowlist" {
+		t.Fatalf("expected path allowlist match, got %q", result.MatchedRule)
+	}
+}
+
+func TestInputInjectDeniesUnlistedType(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+rules:
+  input_injection:
+    enabled: true
+    allowed_types: [keyboard]
+`)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	result := Evaluate(spec, &EvaluationAction{Type: "input_inject", Target: "mouse"})
+	if result.Decision != DecisionDeny {
+		t.Fatalf("expected input injection deny, got %q (%s)", result.Decision, result.Reason)
+	}
+	if result.MatchedRule != "rules.input_injection.allowed_types" {
+		t.Fatalf("expected allowed_types denial, got %q", result.MatchedRule)
+	}
+}
+
+func TestComputerUseRespectsRemoteDesktopChannelBlocks(t *testing.T) {
+	spec, err := Parse(`
+hushspec: "0.1.0"
+rules:
+  computer_use:
+    enabled: true
+    mode: observe
+    allowed_actions: [remote.clipboard]
+  remote_desktop_channels:
+    enabled: true
+    clipboard: false
+    file_transfer: false
+    audio: true
+    drive_mapping: false
+`)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	result := Evaluate(spec, &EvaluationAction{Type: "computer_use", Target: "remote.clipboard"})
+	if result.Decision != DecisionDeny {
+		t.Fatalf("expected remote desktop rule to deny, got %q (%s)", result.Decision, result.Reason)
+	}
+	if result.MatchedRule != "rules.remote_desktop_channels.clipboard" {
+		t.Fatalf("expected remote_desktop_channels match, got %q", result.MatchedRule)
+	}
+}
+
 func buildEvaluationAction(t *testing.T, actionMap map[string]any) *EvaluationAction {
 	t.Helper()
 	jsonBytes, err := json.Marshal(actionMap)

@@ -17,8 +17,10 @@ from hushspec.rules import (
     DefaultAction,
     EgressRule,
     ForbiddenPathsRule,
+    InputInjectionRule,
     PatchIntegrityRule,
     PathAllowlistRule,
+    RemoteDesktopChannelsRule,
     SecretPatternsRule,
     ShellCommandsRule,
     ToolAccessRule,
@@ -226,6 +228,34 @@ def _prefixed_rule(prefix: Optional[str], suffix: str) -> Optional[str]:
 
 def _profile_rule_prefix(profile_id: str, field_name: str) -> str:
     return f"extensions.origins.profiles.{profile_id}.{field_name}"
+
+
+def _has_patterns(patterns: Optional[list[str]]) -> bool:
+    return bool(patterns)
+
+
+def _is_rule_active(rule: object) -> bool:
+    return rule is not None and getattr(rule, "enabled", False) is not False
+
+
+def _decision_rank(decision: Decision) -> int:
+    if decision == Decision.ALLOW:
+        return 1
+    if decision == Decision.WARN:
+        return 2
+    return 3
+
+
+def _more_restrictive_result(
+    left: EvaluationResult, right: EvaluationResult
+) -> EvaluationResult:
+    left_rank = _decision_rank(left.decision)
+    right_rank = _decision_rank(right.decision)
+    if right_rank > left_rank:
+        return right
+    if left_rank > right_rank:
+        return left
+    return right if right.matched_rule is not None else left
 
 
 
@@ -691,10 +721,8 @@ def evaluate_computer_use_rule(
         )
 
 
-
-
-def evaluate_forbidden_paths(
-    rule: ForbiddenPathsRule,
+def evaluate_remote_desktop_channels_rule(
+    rule: RemoteDesktopChannelsRule,
     target: str,
     posture: Optional[PostureResult],
     origin_profile_id: Optional[str],
@@ -702,23 +730,95 @@ def evaluate_forbidden_paths(
     if not rule.enabled:
         return None
 
-    if _find_first_match(target, rule.exceptions) is not None:
+    if target == "remote.clipboard":
+        field = "clipboard"
+        allowed = rule.clipboard
+    elif target == "remote.file_transfer":
+        field = "file_transfer"
+        allowed = rule.file_transfer
+    elif target == "remote.audio":
+        field = "audio"
+        allowed = rule.audio
+    elif target == "remote.drive_mapping":
+        field = "drive_mapping"
+        allowed = rule.drive_mapping
+    else:
+        return None
+
+    if allowed:
         return _allow_result(
-            "rules.forbidden_paths.exceptions",
-            "path matched an explicit exception",
+            f"rules.remote_desktop_channels.{field}",
+            f"remote desktop channel '{field}' is enabled",
             origin_profile_id,
             posture,
         )
+    return _deny_result(
+        f"rules.remote_desktop_channels.{field}",
+        f"remote desktop channel '{field}' is disabled",
+        origin_profile_id,
+        posture,
+    )
+
+
+def evaluate_input_injection_rule(
+    rule: InputInjectionRule,
+    target: str,
+    posture: Optional[PostureResult],
+    origin_profile_id: Optional[str],
+) -> EvaluationResult:
+    if not rule.enabled:
+        return _allow_result(None, None, origin_profile_id, posture)
+
+    if len(rule.allowed_types) == 0:
+        return _deny_result(
+            "rules.input_injection.allowed_types",
+            "input injection is not allowed when allowed_types is empty",
+            origin_profile_id,
+            posture,
+        )
+
+    if target in rule.allowed_types:
+        return _allow_result(
+            "rules.input_injection.allowed_types",
+            "input injection type is explicitly allowed",
+            origin_profile_id,
+            posture,
+        )
+
+    return _deny_result(
+        "rules.input_injection.allowed_types",
+        "input injection type is not allowed",
+        origin_profile_id,
+        posture,
+    )
+
+
+
+
+def evaluate_forbidden_paths(
+    rule: ForbiddenPathsRule,
+    target: str,
+    posture: Optional[PostureResult],
+    origin_profile_id: Optional[str],
+) -> tuple[Optional[EvaluationResult], bool]:
+    if not rule.enabled:
+        return None, False
+
+    if _find_first_match(target, rule.exceptions) is not None:
+        return None, True
 
     if _find_first_match(target, rule.patterns) is not None:
-        return _deny_result(
-            "rules.forbidden_paths.patterns",
-            "path matched a forbidden pattern",
-            origin_profile_id,
-            posture,
+        return (
+            _deny_result(
+                "rules.forbidden_paths.patterns",
+                "path matched a forbidden pattern",
+                origin_profile_id,
+                posture,
+            ),
+            False,
         )
 
-    return None
+    return None, False
 
 
 def evaluate_path_allowlist(
@@ -764,8 +864,10 @@ def _evaluate_path_guards(
     if spec.rules is None:
         return None
 
+    forbidden_exception_matched = False
+
     if spec.rules.forbidden_paths is not None:
-        result = evaluate_forbidden_paths(
+        result, forbidden_exception_matched = evaluate_forbidden_paths(
             spec.rules.forbidden_paths, target, posture, origin_profile_id
         )
         if result is not None:
@@ -777,6 +879,14 @@ def _evaluate_path_guards(
         )
         if result is not None:
             return result
+
+    if forbidden_exception_matched:
+        return _allow_result(
+            "rules.forbidden_paths.exceptions",
+            "path matched an explicit exception",
+            origin_profile_id,
+            posture,
+        )
 
     return None
 
@@ -790,23 +900,159 @@ def _evaluate_tool_call(
     posture: Optional[PostureResult],
     origin_profile_id: Optional[str],
 ) -> EvaluationResult:
-    rule: Optional[ToolAccessRule] = None
-    prefix: Optional[str] = None
+    base_rule = (
+        spec.rules.tool_access
+        if spec.rules is not None and _is_rule_active(spec.rules.tool_access)
+        else None
+    )
+    profile_rule = (
+        matched_profile.tool_access
+        if matched_profile is not None and _is_rule_active(matched_profile.tool_access)
+        else None
+    )
 
-    if matched_profile is not None and matched_profile.tool_access is not None:
-        rule = matched_profile.tool_access
-        prefix = _profile_rule_prefix(matched_profile.id, "tool_access")
-    elif spec.rules is not None and spec.rules.tool_access is not None:
-        rule = spec.rules.tool_access
-        prefix = "rules.tool_access"
+    if base_rule is None and profile_rule is None:
+        return _allow_result(None, None, origin_profile_id, posture)
 
-    return evaluate_tool_access_rule(
-        rule,
-        prefix,
-        action.target or "",
-        action.args_size,
-        posture,
+    target = action.target or ""
+    profile_prefix = (
+        _profile_rule_prefix(matched_profile.id, "tool_access")
+        if matched_profile is not None
+        else None
+    )
+
+    smallest_arg_limit: Optional[tuple[int, str]] = None
+    if base_rule is not None and base_rule.max_args_size is not None:
+        smallest_arg_limit = (base_rule.max_args_size, "rules.tool_access.max_args_size")
+    if (
+        profile_rule is not None
+        and profile_rule.max_args_size is not None
+        and profile_prefix is not None
+        and (
+            smallest_arg_limit is None
+            or profile_rule.max_args_size < smallest_arg_limit[0]
+        )
+    ):
+        smallest_arg_limit = (
+            profile_rule.max_args_size,
+            f"{profile_prefix}.max_args_size",
+        )
+
+    if (
+        smallest_arg_limit is not None
+        and (action.args_size or 0) > smallest_arg_limit[0]
+    ):
+        return _deny_result(
+            smallest_arg_limit[1],
+            "tool arguments exceeded max_args_size",
+            origin_profile_id,
+            posture,
+        )
+
+    if base_rule is not None and _find_first_match(target, base_rule.block) is not None:
+        return _deny_result(
+            "rules.tool_access.block",
+            "tool is explicitly blocked",
+            origin_profile_id,
+            posture,
+        )
+    if (
+        profile_rule is not None
+        and profile_prefix is not None
+        and _find_first_match(target, profile_rule.block) is not None
+    ):
+        return _deny_result(
+            f"{profile_prefix}.block",
+            "tool is explicitly blocked",
+            origin_profile_id,
+            posture,
+        )
+
+    if (
+        base_rule is not None
+        and _find_first_match(target, base_rule.require_confirmation) is not None
+    ):
+        return _warn_result(
+            "rules.tool_access.require_confirmation",
+            "tool requires confirmation",
+            origin_profile_id,
+            posture,
+        )
+    if (
+        profile_rule is not None
+        and profile_prefix is not None
+        and _find_first_match(target, profile_rule.require_confirmation) is not None
+    ):
+        return _warn_result(
+            f"{profile_prefix}.require_confirmation",
+            "tool requires confirmation",
+            origin_profile_id,
+            posture,
+        )
+
+    base_has_allow = _has_patterns(base_rule.allow if base_rule is not None else None)
+    profile_has_allow = _has_patterns(
+        profile_rule.allow if profile_rule is not None else None
+    )
+    base_allow_match = (
+        not base_has_allow
+        or (
+            base_rule is not None
+            and _find_first_match(target, base_rule.allow) is not None
+        )
+    )
+    profile_allow_match = (
+        not profile_has_allow
+        or (
+            profile_rule is not None
+            and _find_first_match(target, profile_rule.allow) is not None
+        )
+    )
+    if (base_has_allow or profile_has_allow) and base_allow_match and profile_allow_match:
+        matched_rule: Optional[str]
+        if profile_has_allow and profile_prefix is not None:
+            matched_rule = f"{profile_prefix}.allow"
+        elif base_has_allow:
+            matched_rule = "rules.tool_access.allow"
+        else:
+            matched_rule = None
+        return _allow_result(
+            matched_rule,
+            "tool is explicitly allowed",
+            origin_profile_id,
+            posture,
+        )
+
+    default_action = (
+        DefaultAction.BLOCK
+        if (
+            (base_rule is not None and base_rule.default == DefaultAction.BLOCK)
+            or (
+                profile_rule is not None
+                and profile_rule.default == DefaultAction.BLOCK
+            )
+        )
+        else DefaultAction.ALLOW
+    )
+    matched_rule = (
+        f"{profile_prefix}.default"
+        if profile_rule is not None and profile_prefix is not None
+        else "rules.tool_access.default"
+        if base_rule is not None
+        else None
+    )
+    if default_action == DefaultAction.ALLOW:
+        return _allow_result(
+            matched_rule,
+            "tool matched default allow",
+            origin_profile_id,
+            posture,
+        )
+    return _deny_result(
+        matched_rule,
+        "tool matched default block",
         origin_profile_id,
+        posture,
     )
 
 
@@ -817,25 +1063,110 @@ def _evaluate_egress(
     posture: Optional[PostureResult],
     origin_profile_id: Optional[str],
 ) -> EvaluationResult:
-    rule: Optional[EgressRule] = None
-    prefix: Optional[str] = None
+    base_rule = (
+        spec.rules.egress
+        if spec.rules is not None and _is_rule_active(spec.rules.egress)
+        else None
+    )
+    profile_rule = (
+        matched_profile.egress
+        if matched_profile is not None and _is_rule_active(matched_profile.egress)
+        else None
+    )
 
-    if matched_profile is not None and matched_profile.egress is not None:
-        rule = matched_profile.egress
-        prefix = _profile_rule_prefix(matched_profile.id, "egress")
-    elif spec.rules is not None and spec.rules.egress is not None:
-        rule = spec.rules.egress
-        prefix = "rules.egress"
+    if base_rule is None and profile_rule is None:
+        return _allow_result(None, None, origin_profile_id, posture)
 
-    if rule is not None:
-        return evaluate_egress_rule(
-            rule,
-            prefix or "rules.egress",
-            action.target or "",
-            posture,
+    target = action.target or ""
+    profile_prefix = (
+        _profile_rule_prefix(matched_profile.id, "egress")
+        if matched_profile is not None
+        else None
+    )
+
+    if base_rule is not None and _find_first_match(target, base_rule.block) is not None:
+        return _deny_result(
+            "rules.egress.block",
+            "domain is explicitly blocked",
             origin_profile_id,
+            posture,
         )
-    return _allow_result(None, None, origin_profile_id, posture)
+    if (
+        profile_rule is not None
+        and profile_prefix is not None
+        and _find_first_match(target, profile_rule.block) is not None
+    ):
+        return _deny_result(
+            f"{profile_prefix}.block",
+            "domain is explicitly blocked",
+            origin_profile_id,
+            posture,
+        )
+
+    base_has_allow = _has_patterns(base_rule.allow if base_rule is not None else None)
+    profile_has_allow = _has_patterns(
+        profile_rule.allow if profile_rule is not None else None
+    )
+    base_allow_match = (
+        not base_has_allow
+        or (
+            base_rule is not None
+            and _find_first_match(target, base_rule.allow) is not None
+        )
+    )
+    profile_allow_match = (
+        not profile_has_allow
+        or (
+            profile_rule is not None
+            and _find_first_match(target, profile_rule.allow) is not None
+        )
+    )
+    if (base_has_allow or profile_has_allow) and base_allow_match and profile_allow_match:
+        matched_rule: Optional[str]
+        if profile_has_allow and profile_prefix is not None:
+            matched_rule = f"{profile_prefix}.allow"
+        elif base_has_allow:
+            matched_rule = "rules.egress.allow"
+        else:
+            matched_rule = None
+        return _allow_result(
+            matched_rule,
+            "domain is explicitly allowed",
+            origin_profile_id,
+            posture,
+        )
+
+    default_action = (
+        DefaultAction.BLOCK
+        if (
+            (base_rule is not None and base_rule.default == DefaultAction.BLOCK)
+            or (
+                profile_rule is not None
+                and profile_rule.default == DefaultAction.BLOCK
+            )
+        )
+        else DefaultAction.ALLOW
+    )
+    matched_rule = (
+        f"{profile_prefix}.default"
+        if profile_rule is not None and profile_prefix is not None
+        else "rules.egress.default"
+        if base_rule is not None
+        else None
+    )
+    if default_action == DefaultAction.ALLOW:
+        return _allow_result(
+            matched_rule,
+            "domain matched default allow",
+            origin_profile_id,
+            posture,
+        )
+    return _deny_result(
+        matched_rule,
+        "domain matched default block",
+        origin_profile_id,
+        posture,
+    )
 
 
 def _evaluate_file_read(
@@ -925,9 +1256,45 @@ def _evaluate_computer_use(
     posture: Optional[PostureResult],
     origin_profile_id: Optional[str],
 ) -> EvaluationResult:
-    if spec.rules is not None and spec.rules.computer_use is not None:
-        return evaluate_computer_use_rule(
+    computer_use_result = (
+        evaluate_computer_use_rule(
             spec.rules.computer_use,
+            action.target or "",
+            posture,
+            origin_profile_id,
+        )
+        if spec.rules is not None and spec.rules.computer_use is not None
+        else None
+    )
+    remote_desktop_result = (
+        evaluate_remote_desktop_channels_rule(
+            spec.rules.remote_desktop_channels,
+            action.target or "",
+            posture,
+            origin_profile_id,
+        )
+        if spec.rules is not None and spec.rules.remote_desktop_channels is not None
+        else None
+    )
+
+    if computer_use_result is not None and remote_desktop_result is not None:
+        return _more_restrictive_result(computer_use_result, remote_desktop_result)
+    if computer_use_result is not None:
+        return computer_use_result
+    if remote_desktop_result is not None:
+        return remote_desktop_result
+    return _allow_result(None, None, origin_profile_id, posture)
+
+
+def _evaluate_input_injection(
+    spec: HushSpec,
+    action: EvaluationAction,
+    posture: Optional[PostureResult],
+    origin_profile_id: Optional[str],
+) -> EvaluationResult:
+    if spec.rules is not None and spec.rules.input_injection is not None:
+        return evaluate_input_injection_rule(
+            spec.rules.input_injection,
             action.target or "",
             posture,
             origin_profile_id,
@@ -1016,6 +1383,8 @@ def evaluate(spec: HushSpec, action: EvaluationAction) -> EvaluationResult:
         )
     elif action_type == "computer_use":
         return _evaluate_computer_use(spec, action, posture, origin_profile_id)
+    elif action_type == "input_inject":
+        return _evaluate_input_injection(spec, action, posture, origin_profile_id)
     else:
         return EvaluationResult(
             decision=Decision.ALLOW,
