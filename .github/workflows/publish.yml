@@ -36,6 +36,21 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Stage rulesets for crate packaging
+        run: |
+          # hushspec crate uses include_str! to embed rulesets from workspace root.
+          # cargo publish only packages files within the crate directory, so we
+          # copy rulesets alongside the source before packaging.
+          cp -r rulesets crates/hushspec/rulesets
+
+      - name: Patch include_str paths for publish
+        run: |
+          # Rewrite include_str!("../../../rulesets/...") to include_str!("../rulesets/...")
+          # so paths resolve within the packaged crate directory.
+          sed -i 's|include_str!("../../../rulesets/|include_str!("../rulesets/|g' \
+            crates/hushspec/src/resolve.rs \
+            crates/hushspec/src/panic.rs
+
       - name: Publish hushspec (library)
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
@@ -61,10 +76,15 @@ jobs:
           fi
 
   # ── npm: publish @hushspec/core ────────────────────────────────────
+  # NOTE: NPM_TOKEN must be an Automation or Granular Access Token
+  # (not a "Publish" token) to bypass OTP in CI.
   npm:
     name: Publish npm package
     needs: ci
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     if: >-
       contains(github.event.inputs.packages, 'npm') ||
       contains(github.event.inputs.packages, 'all')
@@ -91,7 +111,7 @@ jobs:
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             npm publish --access public --dry-run
           else
-            npm publish --access public
+            npm publish --access public --provenance
           fi
 
   # ── PyPI: publish hushspec ─────────────────────────────────────────
